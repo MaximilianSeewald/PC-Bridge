@@ -1,6 +1,6 @@
 # PC-Bridge
 
-PC-Bridge verbindet einen ChatGPT-Work-Chat im Browser mit freigegebenen
+PC-Bridge verbindet ChatGPT Web mit freigegebenen
 MCP-Werkzeugen auf einem lokalen Windows-PC.
 
 ## Eigenständig gehostete GitHub-Version
@@ -8,7 +8,9 @@ MCP-Werkzeugen auf einem lokalen Windows-PC.
 Die Web-Version liefert Plugin, Relay und Windows-Client als getrennte
 Pakete aus dem Repository. Der Plugin-Build enthält eine echte
 `mcp.json` mit der HTTPS-Adresse des eigenen Relays und OAuth-Konfiguration.
-Für diese Variante ist keine ChatGPT Site erforderlich.
+Als öffentliche Relay-Adresse für die Projektinstanz ist
+`https://relay.maximilian-seewald.de` vorgesehen. Beim Selbsthosting
+setzt du deine eigene HTTPS-Adresse.
 
 ```sh
 npm test

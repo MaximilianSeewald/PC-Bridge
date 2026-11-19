@@ -1,5 +1,5 @@
 {
-  "relay": "https://pc-bridge.example.org",
+  "relay": "https://relay.maximilian-seewald.de",
   "servers": {
     "epoch": {
       "command": "node",

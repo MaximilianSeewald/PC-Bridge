@@ -8,8 +8,8 @@ im Arbeitsspeicher und führt die MCP-Tools nicht selbst aus.
 ## OAuth und Geräte konfigurieren
 
 1. Richte bei einem OpenID-Connect-Anbieter eine API ein. Ihre Audience ist
-   die Relay-Adresse inklusive `/mcp`, etwa
-   `https://bridge.example.org/mcp`. Richte den Scope `pcbridge:invoke` ein.
+   die Relay-Adresse inklusive `/mcp`. Für die Projektinstanz lautet sie
+   `https://relay.maximilian-seewald.de/mcp`. Richte den Scope `pcbridge:invoke` ein.
    Das Relay akzeptiert RS256-signierte JWT-Access-Tokens mit dieser Audience,
    diesem Scope und dem verifizierten `sub` des Nutzers.
 2. Registriere für den Plugin-Import bzw. die Einreichung einen öffentlichen
@@ -22,9 +22,10 @@ im Arbeitsspeicher und führt die MCP-Tools nicht selbst aus.
    node -e 'const c=require("node:crypto"), k=c.randomBytes(32).toString("hex"); console.log("PC-Schluessel:", k, "\nSHA-256:", c.createHash("sha256").update(k).digest("hex"))'
    ```
 
-   Trage in einer außerhalb des Repos liegenden JSON-Datei den
+   Trage in einer privaten JSON-Datei den
    OAuth-`sub` des Nutzers als Schlüssel und dessen Hash als Wert ein.
-   Siehe `relay/devices.example.json`. Der PC bekommt
+   Kopiere dazu `relay/devices.example.json` nach `relay/devices.json`
+   oder konfiguriere einen eigenen Pfad. Der PC bekommt
    den Geräteschlüssel, das Relay speichert nur den Hash.
 
 ## Relay ausführen
@@ -43,11 +44,31 @@ Mit Node.js 22 oder neuer im entpackten Relay-Archiv oder im Repo:
 node relay/server.mjs
 ```
 
-Der Reverse-Proxy benötigt eine gültige TLS-Konfiguration und ein Timeout
-von mindestens 30 Sekunden für `POST /mcp`. Ein Status 200 auf
-`GET /healthz` zeigt, dass der Prozess erreichbar ist. Das Relay publiziert
-sein OAuth-Metadatendokument unter `/.well-known/oauth-protected-resource/mcp`.
+### Docker Compose
 
-Alternativ im Repository `docker build -f relay/Dockerfile -t pc-bridge-relay .`
-ausführen. Im Container die Gerätezuordnung schreibgeschützt einbinden und
-die Umgebungsvariablen setzen.
+Kopiere `relay/.env.example` nach `relay/.env` und trage den exakten
+OAuth-Issuer ein. Die Vorlage setzt die Projekt-Domain. Passe
+`PC_BRIDGE_ORIGIN` für eine eigene Instanz an. Die Geräte-Datei muss
+für den Benutzer `node` im Container lesbar sein. Starte den Dienst
+aus dem Hauptordner des Repos oder des entpackten Relay-Archivs.
+
+```sh
+docker compose --env-file relay/.env -f relay/compose.yaml up -d --build
+```
+
+### Öffentliches HTTPS einrichten
+
+Leite die Relay-Subdomain per DNS auf den Server mit deinem HTTPS-Reverse-Proxy.
+Ein Proxy auf demselben Host leitet den gesamten Hostnamen an
+`http://127.0.0.1:8787` weiter. Er benötigt ein gültiges TLS-Zertifikat
+und ein Antwort-Timeout von mindestens 30 Sekunden für `POST /mcp`.
+
+Prüfe für die Projektinstanz die beiden öffentlichen Endpunkte.
+
+```sh
+curl -fsS https://relay.maximilian-seewald.de/healthz
+curl -fsS https://relay.maximilian-seewald.de/.well-known/oauth-protected-resource/mcp
+```
+
+Das OAuth-Metadatendokument muss als `resource` die öffentliche MCP-URL
+und unter `authorization_servers` deinen OAuth-Issuer ausgeben.

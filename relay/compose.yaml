@@ -1,0 +1,20 @@
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: relay/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      PC_BRIDGE_ORIGIN: ${PC_BRIDGE_ORIGIN:?Set PC_BRIDGE_ORIGIN in relay/.env}
+      PC_BRIDGE_ISSUER: ${PC_BRIDGE_ISSUER:?Set PC_BRIDGE_ISSUER in relay/.env}
+      PC_BRIDGE_SCOPE: ${PC_BRIDGE_SCOPE:-pcbridge:invoke}
+      PC_BRIDGE_DEVICES_FILE: /app/devices.json
+    volumes:
+      - type: bind
+        source: ${PC_BRIDGE_DEVICES_FILE:-./devices.json}
+        target: /app/devices.json
+        read_only: true
+        bind:
+          create_host_path: false

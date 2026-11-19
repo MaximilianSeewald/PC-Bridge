@@ -2,11 +2,14 @@
 
 Baue das Plugin-ZIP mit der produktiven HTTPS-Origin deiner Relay-Instanz
 und der öffentlichen Client-ID für OAuth Authorization Code mit PKCE.
+Führe den Befehl im entpackten Plugin-Builder oder im Verzeichnis `plugin`
+des Repositorys aus.
 
 ```sh
-python3 build_web_archive.py https://bridge.example.org --client-id CLIENT_ID
+python3 build_web_archive.py https://relay.maximilian-seewald.de --client-id CLIENT_ID
 ```
 
+Verwende beim Selbsthosting die HTTPS-Origin deiner Instanz.
 Falls dein Anbieter DCR oder CIMD unterstützt, verwende stattdessen
 `--client-mode dcr` oder `--client-mode cimd`. Nutzt dein Relay einen
 anderen OAuth-Scope, gib ihn mit `--scope` an.

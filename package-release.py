@@ -33,7 +33,8 @@ WEB_PACKAGES = {
     },
     "PC-Bridge-Web-Relay.zip": {
         **{f"relay/{name}": f"relay/{name}" for name in (
-            "server.mjs", "oauth.mjs", "Dockerfile", "devices.example.json"
+            "server.mjs", "oauth.mjs", "Dockerfile", "devices.example.json",
+            "compose.yaml", ".env.example",
         )},
         "relay/README.md": "README.md",
     },

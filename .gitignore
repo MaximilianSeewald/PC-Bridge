@@ -5,3 +5,4 @@
 /node_modules/
 /client/pc-bridge.config.json
 /relay/devices.json
+/relay/.env

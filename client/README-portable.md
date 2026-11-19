@@ -4,8 +4,9 @@ Windows benötigt Node.js 22 oder neuer und die Programme deiner lokalen
 MCP-Server. Gib nur die Programme und Werkzeuge frei, die du aus dem Chat
 benutzen möchtest.
 
-1. Kopiere `pc-bridge.example.json` nach `pc-bridge.config.json`. Setze
-   darin `relay` auf die HTTPS-Origin des Relays.
+1. Kopiere `pc-bridge.example.json` nach `pc-bridge.config.json`. Die
+   Vorlage verwendet `https://relay.maximilian-seewald.de`. Trage für
+   eine eigene Instanz unter `relay` deren HTTPS-Origin ein.
 2. Trage unter `servers` deine lokalen `stdio`-MCP-Server ein. `command`
    und `args` entsprechen ihrer normalen MCP-Konfiguration. Unter `tools`
    stehen die exakten Tool-Namen, die dieser PC über das Relay freigibt.
