@@ -1,0 +1,313 @@
+const tools = [
+  {
+    name: 'pc_ping',
+    title: 'Verbindung zum PC testen',
+    description: 'Prüft mit einem frischen zufälligen Prüfwert, ob der gekoppelte Windows-PC gerade tatsächlich antwortet.',
+  },
+  {
+    name: 'epoch_git_status',
+    title: 'Lokalen EPOCH-Git-Status lesen',
+    description: 'Liest Branch und Zahl der Änderungen aus der lokal auf dem gekoppelten PC konfigurierten EPOCH-Kopie.',
+  },
+].map((tool) => ({
+  ...tool,
+  inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+}));
+
+const protocolVersion = '2026-07-28';
+const onlineWindow = 12_000;
+const jobLifetime = 14_000;
+const responseHeaders = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
+const encoder = new TextEncoder();
+const allowedErrors = new Set(['git_failed', 'repo_invalid', 'invalid_job', 'expired']);
+const deviceTokenPattern = /^[a-f0-9]{64}$/;
+
+function json(value, status = 200) {
+  return Response.json(value, { status, headers: responseHeaders });
+}
+
+function owner(request, env) {
+  const email = request.headers.get('oai-authenticated-user-email');
+  return Boolean(email && env.BRIDGE_OWNER_EMAIL &&
+    email.toLowerCase() === env.BRIDGE_OWNER_EMAIL.toLowerCase());
+}
+
+function hex(bytes) {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function hash(token) {
+  return hex(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(token))));
+}
+
+function page(content) {
+  return new Response(`<!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>PC-Bridge</title>
+<style>
+  body{margin:0;background:#111822;color:#f3f5f7;font:18px/1.55 system-ui,sans-serif}
+  main{max-width:38rem;margin:10vh auto;padding:1.75rem}
+  h1{font-size:2.4rem;line-height:1.1;letter-spacing:-.04em}
+  p,li{color:#c5d0df} a{color:#96e8c3} form{display:inline-block;margin:0 .8rem .8rem 0}
+  button{font:600 1rem system-ui;padding:.65rem .95rem;border:1px solid #54677d;border-radius:7px;background:#222f40;color:#f3f5f7;cursor:pointer}
+  form:first-of-type button{background:#96e8c3;color:#12251d;border-color:#96e8c3}
+  textarea{box-sizing:border-box;width:100%;padding:.8rem;background:#182434;color:#f3f5f7;border:1px solid #54677d;border-radius:7px;font:1rem monospace}
+  :focus-visible{outline:3px solid #f3c866;outline-offset:3px}
+</style></head><body><main><h1>PC-Bridge</h1>${content}</main></body></html>`, {
+    headers: {
+      ...responseHeaders,
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+      'Referrer-Policy': 'no-referrer',
+    },
+  });
+}
+
+async function dashboard(request, env, path) {
+  if (!owner(request, env)) return json({ error: 'forbidden' }, 403);
+  if (path === '/' && request.method === 'GET') {
+    const device = await env.DB.prepare('SELECT last_seen FROM bridge_device WHERE id = 1').first();
+    let status = 'Kein PC gekoppelt.';
+    if (device) {
+      status = 'PC gekoppelt. Der Windows-Client ist offline.';
+      if (device.last_seen && Date.now() - device.last_seen < onlineWindow) {
+        status = 'Der Windows-Client ist online.';
+      }
+    }
+    return page(`<p>${status}</p><p>Starte <strong>PC-Bridge.cmd</strong> aus dem entpackten Ordner.
+Kopple den Client und rufe danach <strong>@PC-Bridge</strong> in ChatGPT Work auf.</p>
+<form method="post" action="/pair"><button>Kopplungscode anzeigen</button></form>
+<form method="post" action="/revoke"><button>Kopplung aufheben</button></form>
+<p>Ein neuer Code ersetzt die bisherige Kopplung.</p>`);
+  }
+  if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+  const origin = request.headers.get('Origin');
+  // Referrer-Policy: no-referrer can give an HTML form submission an opaque Origin.
+  // Browsers still set Sec-Fetch-Site and do not let web pages forge it.
+  const sameOriginForm = (origin === 'null' || origin === null) &&
+    request.headers.get('Sec-Fetch-Site') === 'same-origin';
+  if (origin !== env.BRIDGE_ORIGIN && !sameOriginForm) {
+    return json({ error: 'forbidden' }, 403);
+  }
+
+  const deleteJobs = env.DB.prepare('DELETE FROM bridge_job');
+  if (path === '/revoke') {
+    await env.DB.batch([deleteJobs, env.DB.prepare('DELETE FROM bridge_device')]);
+    return page('<p>Die Kopplung wurde aufgehoben.</p><a href="/">Zurück zum Status</a>');
+  }
+  if (!env.BRIDGE_SITES_TOKEN || !env.BRIDGE_ORIGIN) {
+    return json({ error: 'pairing_unavailable' }, 503);
+  }
+  const deviceToken = hex(crypto.getRandomValues(new Uint8Array(32)));
+  await env.DB.batch([
+    deleteJobs,
+    env.DB.prepare('INSERT OR REPLACE INTO bridge_device (id, token_hash) VALUES (1, ?)')
+      .bind(await hash(deviceToken)),
+  ]);
+  const encoded = btoa(JSON.stringify({
+    siteOrigin: env.BRIDGE_ORIGIN,
+    siteToken: env.BRIDGE_SITES_TOKEN,
+    deviceToken,
+  }));
+  return page(`<p><label for="code">Kopplungscode für den Windows-Client</label></p>
+<textarea id="code" rows="5" readonly spellcheck="false">${encoded}</textarea>
+<p>Kopiere den Code in die Eingabeaufforderung der PC-Bridge.</p><a href="/">Zum Status</a>`);
+}
+
+function cleanResult(result, job) {
+  if (result?.ok === false && allowedErrors.has(result.error)) {
+    return { ok: false, error: result.error };
+  }
+  if (result?.ok !== true) return null;
+  if (job.tool === 'pc_ping') {
+    return result.challenge === job.challenge ? { ok: true, challenge: job.challenge } : null;
+  }
+  const { branch, staged, unstaged, untracked, conflicts } = result;
+  if (typeof branch !== 'string' || !branch || branch.length > 250 || /[\x00-\x1f\x7f]/.test(branch)) {
+    return null;
+  }
+  const counts = [staged, unstaged, untracked, conflicts];
+  if (counts.some((count) => !Number.isInteger(count) || count < 0 || count > 1_000_000)) return null;
+  return { ok: true, branch, staged, unstaged, untracked, conflicts };
+}
+
+async function deviceRequest(request, env, path) {
+  if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+  const token = request.headers.get('Authorization')?.match(/^Bearer ([a-f0-9]{64})$/)?.[1];
+  if (!token || !deviceTokenPattern.test(token)) return json({ error: 'unauthorized' }, 401);
+  const tokenHash = await hash(token);
+  const now = Date.now();
+  const device = await env.DB.prepare('SELECT 1 FROM bridge_device WHERE id = 1 AND token_hash = ?')
+    .bind(tokenHash).first();
+  if (!device) return json({ error: 'unauthorized' }, 401);
+
+  if (path === '/api/device/poll') {
+    await env.DB.prepare('UPDATE bridge_device SET last_seen = ? WHERE id = 1 AND token_hash = ?')
+      .bind(now, tokenHash).run();
+    const job = await env.DB.prepare(
+      `UPDATE bridge_job SET state = 'claimed' WHERE id = (
+        SELECT id FROM bridge_job WHERE device_hash = ? AND state = 'queued' AND expires_at > ?
+        ORDER BY created_at LIMIT 1
+      ) RETURNING id, tool, challenge, expires_at`,
+    ).bind(tokenHash, now).first();
+    return json({ job: job ?? null });
+  }
+
+  const body = await boundedJson(request, 4096);
+  if (!body || typeof body.id !== 'string' || body.id.length !== 36) {
+    return json({ error: 'invalid_payload' }, 400);
+  }
+  const job = await env.DB.prepare(
+    'SELECT tool, challenge FROM bridge_job WHERE id = ? AND device_hash = ? AND expires_at > ?',
+  ).bind(body.id, tokenHash, now).first();
+  if (!job) return json({ error: 'job_expired_or_missing' }, 409);
+  const result = cleanResult(body.result, job);
+  if (!result) return json({ error: 'invalid_result' }, 400);
+
+  const updated = await env.DB.prepare(
+    `UPDATE bridge_job SET state = 'done', result = ?
+    WHERE id = ? AND device_hash = ? AND expires_at > ? AND state = 'claimed'
+    RETURNING id`,
+  ).bind(JSON.stringify(result), body.id, tokenHash, Date.now()).first();
+  return updated ? json({ accepted: true }) : json({ error: 'job_closed' }, 409);
+}
+
+async function boundedJson(request, limit) {
+  if (!request.body) return null;
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > limit) {
+      await reader.cancel();
+      return null;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  try {
+    return JSON.parse(text + decoder.decode());
+  } catch {
+    return null;
+  }
+}
+
+function mcpError(message) {
+  return { isError: true, content: [{ type: 'text', text: message }] };
+}
+
+async function runJob(env, tool) {
+  const now = Date.now();
+  const device = await env.DB.prepare('SELECT token_hash, last_seen FROM bridge_device WHERE id = 1').first();
+  if (!device) return mcpError('Es ist noch kein PC gekoppelt.');
+  if (!device.last_seen || now - device.last_seen >= onlineWindow) {
+    return mcpError('Der Windows-Client ist offline. Starte PC-Bridge.cmd und versuche es erneut.');
+  }
+  await env.DB.prepare('DELETE FROM bridge_job WHERE expires_at <= ?').bind(now).run();
+
+  const id = crypto.randomUUID();
+  const challenge = tool === 'pc_ping' ? hex(crypto.getRandomValues(new Uint8Array(8))) : null;
+  const queued = await env.DB.prepare(
+    `INSERT INTO bridge_job (id, device_hash, tool, challenge, created_at, expires_at, state)
+     SELECT ?, token_hash, ?, ?, ?, ?, 'queued' FROM bridge_device
+     WHERE id = 1 AND token_hash = ? AND
+       (SELECT COUNT(*) FROM bridge_job WHERE device_hash = ?) < 8
+     RETURNING id`,
+  ).bind(id, tool, challenge, now, now + jobLifetime, device.token_hash, device.token_hash).first();
+  if (!queued) return mcpError('Die Kopplung hat sich geändert oder die Auftragswarteschlange ist voll.');
+  try {
+    while (Date.now() < now + 9_000) {
+      const job = await env.DB.prepare('SELECT state, result FROM bridge_job WHERE id = ?').bind(id).first();
+      if (!job) return mcpError('Die Kopplung wurde während der Anfrage aufgehoben.');
+      if (job.state === 'done') return mcpResult(tool, JSON.parse(job.result));
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    }
+    return mcpError('Der PC hat nicht rechtzeitig geantwortet. Prüfe den Client und versuche es erneut.');
+  } finally {
+    await env.DB.prepare('DELETE FROM bridge_job WHERE id = ?').bind(id).run();
+  }
+}
+
+function mcpResult(tool, result) {
+  if (!result.ok) {
+    const errors = {
+      git_failed: 'Git konnte den Status nicht lesen. Prüfe Git und den EPOCH-Ordner auf dem PC.',
+      repo_invalid: 'Der konfigurierte Ordner ist kein Git-Checkout-Hauptordner.',
+      invalid_job: 'Der Client hat den Auftrag abgelehnt.',
+      expired: 'Der Auftrag ist abgelaufen.',
+    };
+    return mcpError(errors[result.error] ?? 'Der Windows-Client meldet einen Fehler.');
+  }
+  if (tool === 'pc_ping') {
+    return { content: [{ type: 'text', text: `PC verbunden. Prüfwert vom Client: ${result.challenge}` }] };
+  }
+  const { branch, staged, unstaged, untracked, conflicts } = result;
+  const text = `Branch: ${branch}\nVorgemerkt: ${staged}\nNicht vorgemerkt: ${unstaged}\nUnversioniert: ${untracked}\nKonflikte: ${conflicts}`;
+  return { content: [{ type: 'text', text }] };
+}
+
+async function mcp(request, env) {
+  if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+  const message = await boundedJson(request, 8192);
+  const error = (code, text) => json({
+    jsonrpc: '2.0', id: message?.id ?? null, error: { code, message: text },
+  });
+  if (message?.jsonrpc !== '2.0' || typeof message.method !== 'string') {
+    return error(-32600, 'Invalid Request');
+  }
+  if (message.id === undefined) return new Response(null, { status: 202 });
+  const reply = (result) => json({ jsonrpc: '2.0', id: message.id, result });
+  switch (message.method) {
+    case 'server/discover':
+      return reply({ supportedVersions: [protocolVersion], capabilities: { tools: {} } });
+    case 'initialize':
+      return reply({
+        protocolVersion: message.params?.protocolVersion === '2025-11-25' ? '2025-11-25' : protocolVersion,
+        capabilities: { tools: {} },
+        serverInfo: { name: 'pc-bridge', version: '0.1.0' },
+      });
+    case 'ping':
+      return reply({});
+    case 'tools/list':
+      return reply({ tools });
+    case 'tools/call': {
+      if (!owner(request, env)) return reply(mcpError('Dieses Werkzeug ist nur für den Site-Eigentümer verfügbar.'));
+      const name = message.params?.name;
+      const args = message.params?.arguments ?? {};
+      if (!tools.some((tool) => tool.name === name)) return error(-32602, 'Unbekanntes Werkzeug');
+      if (typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length) {
+        return error(-32602, 'Dieses Werkzeug akzeptiert keine Parameter.');
+      }
+      return reply(await runJob(env, name));
+    }
+    default:
+      return error(-32601, 'Method not found');
+  }
+}
+
+export default {
+  async fetch(request, env) {
+    try {
+      const { pathname } = new URL(request.url);
+      switch (pathname) {
+        case '/mcp':
+          return await mcp(request, env);
+        case '/api/device/poll':
+        case '/api/device/result':
+          return await deviceRequest(request, env, pathname);
+        case '/':
+        case '/pair':
+        case '/revoke':
+          return await dashboard(request, env, pathname);
+        default:
+          return json({ error: 'not_found' }, 404);
+      }
+    } catch (error) {
+      console.error('PC-Bridge request failed', error?.name, error?.message);
+      return json({ error: 'internal_error' }, 500);
+    }
+  },
+};
