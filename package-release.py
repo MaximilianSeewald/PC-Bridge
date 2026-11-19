@@ -18,7 +18,9 @@ PACKAGES = {
     },
     "PC-Bridge-Windows-MCP.zip": {
         f"client/{name}": name
-        for name in ("PC-Bridge.cmd", "README.md", "pc-bridge.mjs", "mcp-client.mjs", "mcp-server.mjs")
+        for name in (
+            "PC-Bridge.cmd", "README.md", "pc-bridge.mjs", "mcp-client.mjs", "mcp-server.mjs", "unity-mcp.mjs"
+        )
     },
 }
 
