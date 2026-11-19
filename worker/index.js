@@ -16,11 +16,12 @@ const tools = [
 }));
 
 const protocolVersion = '2026-07-28';
+const release = '0.2.0';
 const onlineWindow = 12_000;
 const jobLifetime = 14_000;
 const responseHeaders = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 const encoder = new TextEncoder();
-const allowedErrors = new Set(['git_failed', 'repo_invalid', 'invalid_job', 'expired']);
+const allowedErrors = new Set(['git_failed', 'repo_invalid', 'invalid_job', 'expired', 'mcp_unavailable']);
 const deviceTokenPattern = /^[a-f0-9]{64}$/;
 
 function json(value, status = 200) {
@@ -74,13 +75,24 @@ async function dashboard(request, env, path) {
         status = 'Der Windows-Client ist online.';
       }
     }
+    const pluginLink = env.BRIDGE_PLUGIN_ARCHIVE
+      ? '<p><a href="/plugin.zip">PC-Bridge Plugin-ZIP herunterladen</a></p>'
+      : '';
     return page(`<p>${status}</p><p>Starte <strong>PC-Bridge.cmd</strong> aus dem entpackten Ordner.
-Kopple den Client und rufe danach <strong>@PC-Bridge</strong> in ChatGPT Work auf.</p>
+Kopple den Client und rufe danach PC-Bridge in ChatGPT Work auf.</p>${pluginLink}
 <form method="post" action="/pair"><button>Kopplungscode anzeigen</button></form>
 <form method="post" action="/revoke"><button>Kopplung aufheben</button></form>
 <p>Ein neuer Code ersetzt die bisherige Kopplung.</p>`);
   }
-  if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
+  if (path === '/plugin.zip' && request.method === 'GET') {
+    if (!env.BRIDGE_PLUGIN_ARCHIVE) return json({ error: 'not_found' }, 404);
+    const archive = Uint8Array.from(atob(env.BRIDGE_PLUGIN_ARCHIVE), (byte) => byte.charCodeAt(0));
+    return new Response(archive, {
+      headers: { ...responseHeaders, 'Content-Type': 'application/zip',
+        'Content-Disposition': 'attachment; filename="PC-Bridge-Plugin.zip"' },
+    });
+  }
+  if (request.method !== 'POST' || path === '/plugin.zip') return json({ error: 'method_not_allowed' }, 405);
   const origin = request.headers.get('Origin');
   // Referrer-Policy: no-referrer can give an HTML form submission an opaque Origin.
   // Browsers still set Sec-Fetch-Site and do not let web pages forge it.
@@ -238,6 +250,7 @@ function mcpResult(tool, result) {
       repo_invalid: 'Der konfigurierte Ordner ist kein Git-Checkout-Hauptordner.',
       invalid_job: 'Der Client hat den Auftrag abgelehnt.',
       expired: 'Der Auftrag ist abgelaufen.',
+      mcp_unavailable: 'Der lokale MCP-Server ist nicht verfügbar. Starte PC-Bridge.cmd erneut.',
     };
     return mcpError(errors[result.error] ?? 'Der Windows-Client meldet einen Fehler.');
   }
@@ -267,7 +280,7 @@ async function mcp(request, env) {
       return reply({
         protocolVersion: message.params?.protocolVersion === '2025-11-25' ? '2025-11-25' : protocolVersion,
         capabilities: { tools: {} },
-        serverInfo: { name: 'pc-bridge', version: '0.1.0' },
+        serverInfo: { name: 'pc-bridge', version: release },
       });
     case 'ping':
       return reply({});
@@ -301,6 +314,7 @@ export default {
         case '/':
         case '/pair':
         case '/revoke':
+        case '/plugin.zip':
           return await dashboard(request, env, pathname);
         default:
           return json({ error: 'not_found' }, 404);
