@@ -13,13 +13,15 @@ PACKAGES = {
         "build.mjs": "build.mjs",
         "package.json": "package.json",
         "worker/index.js": "worker/index.js",
+        "client/unity-tools.json": "client/unity-tools.json",
         "drizzle/0000_bridge.sql": "drizzle/0000_bridge.sql",
+        "drizzle/0001_unity_arguments.sql": "drizzle/0001_unity_arguments.sql",
         "drizzle/meta/_journal.json": "drizzle/meta/_journal.json",
     },
     "PC-Bridge-Windows-MCP.zip": {
         f"client/{name}": name
         for name in (
-            "PC-Bridge.cmd", "README.md", "pc-bridge.mjs", "mcp-client.mjs", "mcp-server.mjs", "unity-mcp.mjs"
+            "PC-Bridge.cmd", "README.md", "pc-bridge.mjs", "unity-mcp.mjs", "unity-tools.json"
         )
     },
 }

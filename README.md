@@ -1,18 +1,19 @@
 # PC-Bridge
 
 PC-Bridge verbindet einen ChatGPT-Work-Chat im Browser mit einem lokalen
-Windows-PC. Der Prototyp bietet drei lesende MCP-Werkzeuge.
+Windows-PC und übergibt Unity-Aufrufe an den lokalen MCP-Server.
 
 - `pc_ping` sendet einen frischen Prüfwert an den Windows-Client und meldet dessen Antwort.
-- `epoch_git_status` zeigt den Branch und die Änderungszahlen eines lokal ausgewählten
-  Git-Checkouts, beispielsweise von EPOCH.
 - `unity_active_scene` liest die aktuell im lokalen Unity-Editor geöffnete
-  Szene und zeigt ihren Speicherstatus. [Unity einrichten](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#unity-anbinden)
+  Szene und zeigt ihren Speicherstatus. [Unity einrichten](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#pc-bridge-unter-windows)
+- Der Katalog spiegelt die integrierten Werkzeuge von MCP for Unity
+  v10.0.0 mitsamt ihren Parameterschemas. Der Windows-Client startet
+  die Unity-Anbindung automatisch beim ersten Unity-Aufruf.
 
 Die private ChatGPT Site hostet den Web-MCP-Endpunkt und die Auftragswarteschlange
-in D1. Der Windows-Client holt Aufträge per HTTPS ab und ruft einen zweiten,
-lokalen MCP-Server über Standard-Ein- und Ausgabe auf. Der lokale Server führt
-die Werkzeuge aus.
+in D1. Der Windows-Client holt Aufträge per HTTPS ab und übergibt sie
+an den lokalen Unity-MCP-Server. So laufen auch Änderungen im lokalen
+Editor. Die private Site und die Gerätekopplung regeln den Zugriff.
 
 ## Unity-Projektdaten
 
@@ -39,7 +40,7 @@ gebaut wurden. Die Veröffentlichung einer Site erfolgt in ChatGPT Sites.
 ## Eigene private Site einrichten
 
 Du brauchst Zugang zu ChatGPT Sites und zur Erstellung eines privaten Site-Plugins.
-Auf Windows brauchst du Node.js 22 oder neuer. Git wird für die Statusabfrage benötigt.
+Auf Windows brauchst du Node.js 22 oder neuer.
 
 1. Klone das Repository oder entpacke das Relay-ZIP. Öffne den Ordner in der ChatGPT-Desktop-App als
    lokales Projekt. Prüfe den Build im Hauptordner mit `npm run build`.
@@ -80,15 +81,15 @@ Auf Windows brauchst du Node.js 22 oder neuer. Git wird für die Statusabfrage b
 Der Kopplungscode enthält die Adresse der Site und die Zugangsdaten für
 den PC. Kopiere ihn direkt von deiner privaten Site in den Client. Über
 **Kopplung aufheben** trennst du den bisherigen Client. Der Client
-überträgt den Prüfwert oder Branch und Änderungszahlen. Git-Dateinamen,
-Dateiinhalte und der Pfad zum Checkout bleiben lokal.
+überträgt den Prüfwert oder die Ausgabe des angeforderten Unity-Werkzeugs.
 
 ## Bestehende private Site aktualisieren
 
 1. Lade `PC-Bridge-Sites-Relay.zip` aus dem gewünschten GitHub Release
    herunter und entpacke es separat. Öffne das Quellprojekt deiner bestehenden
    Site in ChatGPT Work oder Codex.
-2. Übernimm `worker/`, `drizzle/`, `build.mjs` und `package.json` aus
+2. Übernimm `worker/`, `drizzle/`, `client/unity-tools.json`,
+   `build.mjs` und `package.json` aus
    dem Release in das bestehende Quellprojekt. Verwende die vorhandene
    `.openai/hosting.json` als Grundlage. Ihre `project_id` und die
    D1-Bindung identifizieren die Site und ihre Datenbank. Die Vorlage im ZIP
@@ -102,16 +103,17 @@ Dateiinhalte und der Pfad zum Checkout bleiben lokal.
 
 ## Lokal testen
 
-Im Hauptordner unter Node.js 22 oder neuer und mit Git:
+Im Hauptordner unter Node.js 22 oder neuer:
 
 ```sh
 npm test
 npm run build
 ```
 
-Die Tests verwenden SQLite im Arbeitsspeicher und einen temporären
-Git-Checkout. Die Live-Kopplung mit dem eigenen ChatGPT-Konto und
-Windows-PC prüfst du mit den Schritten im Client-Handbuch.
+Die Tests verwenden SQLite im Arbeitsspeicher und einen simulierten
+Unity-MCP-Endpunkt. Der gemeinsame Abnahmelauf im
+[Client-Handbuch](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#gemeinsamer-abnahmelauf)
+prüft die Strecke bis zum echten Unity-Editor.
 
 Die beiden Release-Archive lassen sich im Repository mit
 `python3 package-release.py` unter `dist/packages/` erstellen.

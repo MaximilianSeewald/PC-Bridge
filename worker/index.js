@@ -1,13 +1,10 @@
-const tools = [
+import catalog from '../client/unity-tools.json' with { type: 'json' };
+
+const bridgeTools = [
   {
     name: 'pc_ping',
     title: 'Verbindung zum PC testen',
     description: 'Prüft mit einem frischen zufälligen Prüfwert, ob der gekoppelte Windows-PC gerade tatsächlich antwortet.',
-  },
-  {
-    name: 'epoch_git_status',
-    title: 'Lokalen EPOCH-Git-Status lesen',
-    description: 'Liest Branch und Zahl der Änderungen aus der lokal auf dem gekoppelten PC konfigurierten EPOCH-Kopie.',
   },
   {
     name: 'unity_active_scene',
@@ -19,18 +16,37 @@ const tools = [
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }));
+const externalTools = new Set([
+  'batch_execute', 'execute_code', 'execute_custom_tool', 'execute_menu_item',
+  'generate_image', 'generate_model', 'import_model', 'manage_packages', 'unity_docs',
+]);
+const unityTools = catalog.tools.map(tool => {
+  const readOnlyHint = tool.annotations?.readOnlyHint === true;
+  return {
+    ...tool,
+    annotations: {
+      ...tool.annotations,
+      readOnlyHint,
+      destructiveHint: tool.annotations?.destructiveHint ?? !readOnlyHint,
+      openWorldHint: tool.annotations?.openWorldHint ?? externalTools.has(tool.name),
+    },
+  };
+});
+const unityToolNames = new Set(unityTools.map(tool => tool.name));
+const tools = [...bridgeTools, ...unityTools];
 
 const protocolVersion = '2026-07-28';
-const release = '0.3.0';
-const onlineWindow = 12_000;
-const jobLifetime = 14_000;
+const release = '0.4.0';
+const onlineWindow = 40_000;
+const argumentLimit = 96_000;
+const resultLimit = 1_600_000;
 const responseHeaders = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 const encoder = new TextEncoder();
 const allowedErrors = new Set([
-  'git_failed', 'repo_invalid', 'invalid_job', 'expired', 'mcp_unavailable',
-  'unity_disabled', 'unity_unavailable', 'unity_no_scene',
+  'invalid_job', 'expired', 'unity_unavailable', 'unity_no_scene',
 ]);
 const deviceTokenPattern = /^[a-f0-9]{64}$/;
+const mcpContentTypes = new Set(['text', 'image', 'audio', 'resource', 'resource_link']);
 
 function json(value, status = 200) {
   return Response.json(value, { status, headers: responseHeaders });
@@ -152,13 +168,12 @@ function cleanResult(result, job) {
         typeof isDirty !== 'boolean' || !Number.isSafeInteger(rootCount) || rootCount < 0) return null;
     return { ok: true, sceneName, scenePath, isDirty, rootCount };
   }
-  const { branch, staged, unstaged, untracked, conflicts } = result;
-  if (typeof branch !== 'string' || !branch || branch.length > 250 || /[\x00-\x1f\x7f]/.test(branch)) {
-    return null;
-  }
-  const counts = [staged, unstaged, untracked, conflicts];
-  if (counts.some((count) => !Number.isInteger(count) || count < 0 || count > 1_000_000)) return null;
-  return { ok: true, branch, staged, unstaged, untracked, conflicts };
+  if (!unityToolNames.has(job.tool)) return null;
+  const { content, structuredContent, isError } = result.output ?? {};
+  if (!Array.isArray(content) || !content.every(block => mcpContentTypes.has(block?.type)) ||
+      (structuredContent !== undefined && !record(structuredContent)) ||
+      (isError !== undefined && typeof isError !== 'boolean')) return null;
+  return { ok: true, output: { content, structuredContent, isError } };
 }
 
 async function deviceRequest(request, env, path) {
@@ -178,12 +193,14 @@ async function deviceRequest(request, env, path) {
       `UPDATE bridge_job SET state = 'claimed' WHERE id = (
         SELECT id FROM bridge_job WHERE device_hash = ? AND state = 'queued' AND expires_at > ?
         ORDER BY created_at LIMIT 1
-      ) RETURNING id, tool, challenge, expires_at`,
+      ) RETURNING id, tool, challenge, expires_at, arguments_json`,
     ).bind(tokenHash, now).first();
-    return json({ job: job ?? null });
+    if (!job) return json({ job: null });
+    const { arguments_json, ...claimed } = job;
+    return json({ job: { ...claimed, arguments: JSON.parse(arguments_json) } });
   }
 
-  const body = await boundedJson(request, 4096);
+  const body = await boundedJson(request, resultLimit);
   if (!body || typeof body.id !== 'string' || body.id.length !== 36) {
     return json({ error: 'invalid_payload' }, 400);
   }
@@ -229,7 +246,11 @@ function mcpError(message) {
   return { isError: true, content: [{ type: 'text', text: message }] };
 }
 
-async function runJob(env, tool) {
+function record(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function runJob(env, tool, args) {
   const now = Date.now();
   const device = await env.DB.prepare('SELECT token_hash, last_seen FROM bridge_device WHERE id = 1').first();
   if (!device) return mcpError('Es ist noch kein PC gekoppelt.');
@@ -240,20 +261,23 @@ async function runJob(env, tool) {
 
   const id = crypto.randomUUID();
   const challenge = tool === 'pc_ping' ? hex(crypto.getRandomValues(new Uint8Array(8))) : null;
+  const waitTime = unityToolNames.has(tool) ? 36_000 : 9_000;
+  const pollInterval = waitTime === 36_000 ? 950 : 350;
+  const expiresAt = now + waitTime;
   const queued = await env.DB.prepare(
-    `INSERT INTO bridge_job (id, device_hash, tool, challenge, created_at, expires_at, state)
-     SELECT ?, token_hash, ?, ?, ?, ?, 'queued' FROM bridge_device
+    `INSERT INTO bridge_job (id, device_hash, tool, challenge, created_at, expires_at, state, arguments_json)
+     SELECT ?, token_hash, ?, ?, ?, ?, 'queued', ? FROM bridge_device
      WHERE id = 1 AND token_hash = ? AND
        (SELECT COUNT(*) FROM bridge_job WHERE device_hash = ?) < 8
      RETURNING id`,
-  ).bind(id, tool, challenge, now, now + jobLifetime, device.token_hash, device.token_hash).first();
+  ).bind(id, tool, challenge, now, expiresAt, JSON.stringify(args), device.token_hash, device.token_hash).first();
   if (!queued) return mcpError('Die Kopplung hat sich geändert oder die Auftragswarteschlange ist voll.');
   try {
-    while (Date.now() < now + 9_000) {
+    while (Date.now() < expiresAt) {
       const job = await env.DB.prepare('SELECT state, result FROM bridge_job WHERE id = ?').bind(id).first();
       if (!job) return mcpError('Die Kopplung wurde während der Anfrage aufgehoben.');
       if (job.state === 'done') return mcpResult(tool, JSON.parse(job.result));
-      await new Promise((resolve) => setTimeout(resolve, 350));
+      await new Promise((resolve) => setTimeout(resolve, pollInterval));
     }
     return mcpError('Der PC hat nicht rechtzeitig geantwortet. Prüfe den Client und versuche es erneut.');
   } finally {
@@ -264,12 +288,8 @@ async function runJob(env, tool) {
 function mcpResult(tool, result) {
   if (!result.ok) {
     const errors = {
-      git_failed: 'Git konnte den Status nicht lesen. Prüfe Git und den EPOCH-Ordner auf dem PC.',
-      repo_invalid: 'Der konfigurierte Ordner ist kein Git-Checkout-Hauptordner.',
       invalid_job: 'Der Client hat den Auftrag abgelehnt.',
       expired: 'Der Auftrag ist abgelaufen.',
-      mcp_unavailable: 'Der lokale MCP-Server ist nicht verfügbar. Starte PC-Bridge.cmd erneut.',
-      unity_disabled: 'Starte den Windows-Client mit PC-Bridge.cmd --unity, um Unity-Abfragen zu aktivieren.',
       unity_unavailable: 'Unity MCP hat keine verwertbare Antwort geliefert. Prüfe den lokalen HTTP-Server auf 127.0.0.1:8080 und seine Verbindung zum Unity-Editor.',
       unity_no_scene: 'Unity MCP meldet keine aktive Szene. Prüfe, ob dein Editor mit dem MCP-Server verbunden ist.',
     };
@@ -283,14 +303,12 @@ function mcpResult(tool, result) {
     const text = `Unity-Szene: ${sceneName || 'Ohne Namen'}\nPfad: ${scenePath || 'Noch ohne Datei'}\nObjekte auf oberster Ebene: ${rootCount}\nUngespeicherte Änderungen: ${isDirty ? 'Ja' : 'Nein'}`;
     return { content: [{ type: 'text', text }] };
   }
-  const { branch, staged, unstaged, untracked, conflicts } = result;
-  const text = `Branch: ${branch}\nVorgemerkt: ${staged}\nNicht vorgemerkt: ${unstaged}\nUnversioniert: ${untracked}\nKonflikte: ${conflicts}`;
-  return { content: [{ type: 'text', text }] };
+  return result.output;
 }
 
 async function mcp(request, env) {
   if (request.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-  const message = await boundedJson(request, 8192);
+  const message = await boundedJson(request, argumentLimit);
   const error = (code, text) => json({
     jsonrpc: '2.0', id: message?.id ?? null, error: { code, message: text },
   });
@@ -317,10 +335,10 @@ async function mcp(request, env) {
       const name = message.params?.name;
       const args = message.params?.arguments ?? {};
       if (!tools.some((tool) => tool.name === name)) return error(-32602, 'Unbekanntes Werkzeug');
-      if (typeof args !== 'object' || Array.isArray(args) || Object.keys(args).length) {
-        return error(-32602, 'Dieses Werkzeug akzeptiert keine Parameter.');
+      if (!record(args) || (!unityToolNames.has(name) && Object.keys(args).length)) {
+        return error(-32602, 'Ungültige Parameter für dieses Werkzeug.');
       }
-      return reply(await runJob(env, name));
+      return reply(await runJob(env, name, args));
     }
     default:
       return error(-32601, 'Method not found');

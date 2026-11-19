@@ -1,17 +1,14 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import worker from '../worker/index.js';
-import { startLocalMcp } from '../client/mcp-client.mjs';
 import { deviceClient, parsePairingCode, runJob } from '../client/pc-bridge.mjs';
-import { readUnityActiveScene } from '../client/unity-mcp.mjs';
+import { createUnityMcp } from '../client/unity-mcp.mjs';
+import catalog from '../client/unity-tools.json' with { type: 'json' };
 
 const origin = 'https://bridge-test.chatgpt.site';
 const owner = 'owner@example.com';
@@ -21,7 +18,9 @@ const browserForm = { ...ownerHeader, Origin: 'null', 'Sec-Fetch-Site': 'same-or
 
 function prepareBridge(t) {
   const db = new DatabaseSync(':memory:');
-  db.exec(readFileSync(new URL('../drizzle/0000_bridge.sql', import.meta.url), 'utf8'));
+  for (const migration of ['0000_bridge', '0001_unity_arguments']) {
+    db.exec(readFileSync(new URL(`../drizzle/${migration}.sql`, import.meta.url), 'utf8'));
+  }
   t.after(() => db.close());
   const d1 = {
     prepare(sql) {
@@ -75,11 +74,15 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   const discovery = await mcp('server/discover', {}, {});
   assert.deepEqual(discovery.result.supportedVersions, ['2026-07-28']);
   const list = await mcp('tools/list', {}, {});
-  assert.deepEqual(list.result.tools.map((tool) => tool.name), ['pc_ping', 'epoch_git_status', 'unity_active_scene']);
-  assert.ok(list.result.tools.every((tool) => tool.annotations.readOnlyHint));
+  const actual = list.result.tools;
+  assert.deepEqual(actual.map(tool => tool.name), ['pc_ping', 'unity_active_scene', ...catalog.tools.map(tool => tool.name)]);
+  assert.deepEqual(actual.slice(2).map(tool => tool.inputSchema), catalog.tools.map(tool => tool.inputSchema));
+  assert.equal(actual.find(tool => tool.name === 'manage_gameobject').annotations.readOnlyHint, false);
+  assert.equal(actual.find(tool => tool.name === 'manage_gameobject').annotations.destructiveHint, true);
   assert.equal((await mcp('tools/call', { name: 'pc_ping' }, {})).result.isError, true);
   assert.equal((await mcp('tools/call', { name: 'run_shell' })).error.code, -32602);
-  assert.equal((await mcp('tools/call', { name: 'epoch_git_status', arguments: { path: 'C:\\Other' } })).error.code, -32602);
+  assert.equal((await mcp('tools/call', { name: 'epoch_git_status' })).error.code, -32602);
+  assert.equal((await mcp('tools/call', { name: 'manage_scene', arguments: [] })).error.code, -32602);
   assert.equal((await mcp('tools/call', { name: 'unity_active_scene', arguments: { action: 'save' } })).error.code, -32602);
   assert.equal((await call('/pair', { method: 'POST', headers: { Origin: origin } })).status, 403);
   assert.equal((await call('/pair', { method: 'POST', headers: { ...ownerHeader, Origin: 'https://unrelated.example' } })).status, 403);
@@ -95,160 +98,145 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   assert.match((await mcp('tools/call', { name: 'pc_ping' })).result.content[0].text, /kein PC gekoppelt/);
 });
 
-test('paired client claims once and returns a fresh ping and real Git status', async (t) => {
+async function roundTrip(mcp, device, name, args, callUnity) {
+  const pending = mcp('tools/call', { name, arguments: args });
+  let job;
+  for (let attempt = 0; attempt < 30 && !job; attempt += 1) {
+    job = (await device('/api/device/poll', {})).job;
+    if (!job) await delay(15);
+  }
+  assert.ok(job);
+  assert.deepEqual(job.arguments, args);
+  assert.deepEqual(await device('/api/device/poll', {}), { job: null });
+  if (name === 'pc_ping') {
+    await assert.rejects(device('/api/device/result', { id: job.id, result: { ok: true, challenge: 'wrong' } }),
+      { status: 400 });
+  }
+  const result = await runJob(job, callUnity);
+  assert.deepEqual(await device('/api/device/result', { id: job.id, result }), { accepted: true });
+  return { job, reply: (await pending).result };
+}
+
+test('the paired client claims jobs once and returns fresh ping values', async (t) => {
   const { db, mcp, pair } = prepareBridge(t);
   const device = await pair();
   assert.match((await mcp('tools/call', { name: 'pc_ping' })).result.content[0].text, /offline/);
-  assert.deepEqual(await device('/api/device/poll', {}), { job: null });
-
-  const repo = mkdtempSync(join(tmpdir(), 'pc-bridge-git-'));
-  t.after(() => rmSync(repo, { recursive: true, force: true }));
-  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: 'pipe' });
-  git('init', '-b', 'bridge-test');
-  git('config', 'user.email', 'test@example.com');
-  git('config', 'user.name', 'Bridge Fixture');
-  writeFileSync(join(repo, 'tracked.txt'), 'baseline\n');
-  git('add', 'tracked.txt');
-  git('commit', '-m', 'baseline');
-  git('mv', 'tracked.txt', 'renamed.txt');
-  writeFileSync(join(repo, 'renamed.txt'), 'changed after staging\n');
-  writeFileSync(join(repo, 'new.txt'), 'untracked\n');
-  mkdirSync(join(repo, 'subfolder'));
-
-  const local = await startLocalMcp(repo);
-  t.after(local.close);
-  const discovered = (await local.request('tools/list', {})).tools;
-  assert.deepEqual(discovered.map((tool) => tool.name), ['pc_ping', 'epoch_git_status']);
-  assert.ok(discovered.every((tool) => tool.annotations.readOnlyHint));
-  assert.deepEqual(await local.callTool('epoch_git_status', { path: '/outside' }),
-    { ok: false, error: 'invalid_job' });
-
-  async function roundTrip(tool) {
-    const pending = mcp('tools/call', { name: tool });
-    let job;
-    for (let attempt = 0; attempt < 30 && !job; attempt += 1) {
-      job = (await device('/api/device/poll', {})).job;
-      if (!job) await delay(15);
-    }
-    assert.ok(job);
-    assert.deepEqual(await device('/api/device/poll', {}), { job: null });
-    if (tool === 'pc_ping') {
-      await assert.rejects(device('/api/device/result', { id: job.id, result: { ok: true, challenge: 'wrong' } }),
-        { status: 400 });
-    }
-    const result = await runJob(job, local.callTool);
-    assert.deepEqual(await device('/api/device/result', { id: job.id, result }), { accepted: true });
-    const reply = (await pending).result;
-    assert.equal(reply.isError, undefined);
-    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM bridge_job').get().count, 0);
-    return { job, text: reply.content[0].text };
-  }
-
-  const ping = await roundTrip('pc_ping');
-  assert.match(ping.text, new RegExp(ping.job.challenge));
-  assert.notEqual(ping.job.challenge, (await roundTrip('pc_ping')).job.challenge);
-  const status = await roundTrip('epoch_git_status');
-  assert.equal(status.text, 'Branch: bridge-test\nVorgemerkt: 1\nNicht vorgemerkt: 1\nUnversioniert: 1\nKonflikte: 0');
-  assert.doesNotMatch(status.text, /renamed|tracked\.txt|pc-bridge-git/);
-  const subfolder = await startLocalMcp(join(repo, 'subfolder'));
-  t.after(subfolder.close);
-  assert.deepEqual(await subfolder.callTool('epoch_git_status', {}), { ok: false, error: 'repo_invalid' });
-  assert.deepEqual(await runJob({ ...status.job, expires_at: 1 }, local.callTool), { ok: false, error: 'expired' });
-  local.close();
-  assert.deepEqual(await runJob({ ...ping.job, expires_at: Date.now() + 1000 }, local.callTool),
-    { ok: false, error: 'mcp_unavailable' });
+  await device('/api/device/poll', {});
+  const callUnity = () => assert.fail('ping must not require Unity');
+  const first = await roundTrip(mcp, device, 'pc_ping', {}, callUnity);
+  const second = await roundTrip(mcp, device, 'pc_ping', {}, callUnity);
+  assert.match(first.reply.content[0].text, new RegExp(first.job.challenge));
+  assert.notEqual(first.job.challenge, second.job.challenge);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM bridge_job').get().n, 0);
 });
 
-test('the paired client reads an unsaved Unity change over the local MCP HTTP connection', async (t) => {
+test('all catalog names and nested inputs are routed to the local Unity client', async () => {
+  const args = { text: 'Übung', value: { x: 2, uses: [true, null] } };
+  const output = { content: [{type: 'text', text: 'ok'}] };
+  for (const tool of catalog.tools) {
+    const result = await runJob({ tool: tool.name, arguments: args, expires_at: Date.now() + 10_000 },
+      async (name, observed) => {
+        assert.equal(name, tool.name);
+        assert.deepEqual(observed, args);
+        return output;
+      });
+    assert.deepEqual(result, { ok: true, output });
+  }
+});
+
+test('create, move, add a component and read back the scene in a single Unity session', async (t) => {
   const { mcp, pair } = prepareBridge(t);
   const device = await pair();
   await device('/api/device/poll', {});
 
   const observed = [];
-  let dirty = false;
-  let sceneResponse = 'application/json';
+  const created = { name: '', position: null, components: [] };
   const unityServer = createServer(async (req, res) => {
     const chunks = [];
     for await (const part of req) chunks.push(part);
     const message = chunks.length ? JSON.parse(Buffer.concat(chunks)) : {};
-    observed.push({
-      method: message.method ?? req.method, params: message.params,
-      session: req.headers['mcp-session-id'], version: req.headers['mcp-protocol-version'],
-    });
-    if (req.method === 'DELETE' || message.method === 'notifications/initialized') {
-      res.writeHead(202, { Connection: 'close' });
-      res.end();
+    observed.push({ method: message.method ?? req.method, params: message.params, session: req.headers['mcp-session-id'] });
+    if (message.method === 'notifications/initialized') {
+      res.writeHead(202, { Connection: 'close' }).end();
       return;
     }
     const initialized = message.method === 'initialize';
-    const result = initialized ? { protocolVersion: '2025-06-18', capabilities: { tools: {} } } : {
-      structuredContent: {
-        success: true,
-        data: { name: 'Übung', path: 'Assets/Übung.unity', isLoaded: true, isDirty: dirty, rootCount: dirty ? 2 : 1 },
-      },
-    };
+    const { name, arguments: args } = message.params ?? {};
+    let result;
+    if (initialized) {
+      result = { protocolVersion: '2025-06-18', capabilities: { tools: {} } };
+    } else {
+      let payload;
+      if (name === 'manage_tools') payload = { activated: args.group };
+      if (name === 'manage_gameobject' && args.action === 'create') {
+        created.name = args.name;
+        payload = { success: true };
+      }
+      if (name === 'manage_gameobject' && args.action === 'modify') {
+        created.position = args.position;
+        payload = { success: true };
+      }
+      if (name === 'manage_components') {
+        created.components.push(args.component_type);
+        payload = { success: true };
+      }
+      if (name === 'manage_scene' && args.action === 'get_hierarchy') payload = { success: true, data: created };
+      if (name === 'manage_scene' && args.action === 'get_active') {
+        payload = { success: true, data: {
+          isLoaded: true, isDirty: true, name: 'Übung', path: 'Assets/Übung.unity', rootCount: 1,
+        } };
+      }
+      if (name === 'find_gameobjects') payload = { success: false, message: 'Unity returned a tool error' };
+      if (name === 'manage_camera') {
+        result = { content: [{type: 'image', mimeType: 'image/png', data: 'AA=='}] };
+      } else {
+        result = { content: [{type: 'text', text: JSON.stringify(payload)}], structuredContent: payload };
+      }
+    }
     const response = JSON.stringify({ jsonrpc: '2.0', id: message.id, result });
-    const type = initialized ? 'application/json' : sceneResponse;
+    const type = initialized ? 'application/json' : 'text/event-stream';
     res.writeHead(200, {
       'content-type': type, 'mcp-session-id': 'fixture-session', Connection: 'close',
     });
-    if (type === 'text/event-stream') {
-      res.write(': keep-alive\r\n\r\n');
-      res.end(`event: message\r\ndata: ${response}\r\n\r\n`);
-    } else {
-      res.end(response);
-    }
+    res.end(initialized ? response : `event: message\r\ndata: ${response}\r\n\r\n`);
   });
   unityServer.listen(0, '127.0.0.1');
   await once(unityServer, 'listening');
   t.after(() => new Promise(resolve => unityServer.close(resolve)));
-  const readUnity = () => readUnityActiveScene((url, options) => {
+  const { callTool } = createUnityMcp((url, options) => {
     assert.equal(url, 'http://127.0.0.1:8080/mcp');
     return fetch(`http://127.0.0.1:${unityServer.address().port}/mcp`, options);
   });
+  const call = async (name, args) => (await roundTrip(mcp, device, name, args, callTool)).reply;
 
-  async function callThroughBridge(unity) {
-    const pending = mcp('tools/call', { name: 'unity_active_scene' });
-    let job;
-    for (let attempt = 0; attempt < 30 && !job; attempt += 1) {
-      job = (await device('/api/device/poll', {})).job;
-      if (!job) await delay(15);
-    }
-    assert.ok(job);
-    const result = await runJob(job, () => assert.fail('Unity must use its own MCP connection'), unity);
-    await device('/api/device/result', { id: job.id, result });
-    return (await pending).result;
-  }
-
-  assert.match((await callThroughBridge(null)).content[0].text, /--unity/);
-  assert.match((await callThroughBridge(readUnity)).content[0].text,
-    /Unity-Szene: Übung\nPfad: Assets\/Übung\.unity\nObjekte auf oberster Ebene: 1\nUngespeicherte Änderungen: Nein/);
-  dirty = true;
-  sceneResponse = 'text/event-stream';
-  assert.match((await callThroughBridge(readUnity)).content[0].text,
-    /Objekte auf oberster Ebene: 2\nUngespeicherte Änderungen: Ja/);
-
-  const callSteps = [
-    { method: 'notifications/initialized', session: 'fixture-session', version: '2025-06-18' },
-    { method: 'tools/call', params: { name: 'manage_scene', arguments: { action: 'get_active' } },
-      session: 'fixture-session', version: '2025-06-18' },
-    { method: 'DELETE', session: 'fixture-session', version: '2025-06-18' },
-  ];
-  assert.deepEqual(observed.filter(entry => entry.method !== 'initialize').map(entry => {
-    if (entry.params === undefined) delete entry.params;
-    return entry;
-  }), [...callSteps, ...callSteps]);
+  assert.equal((await call('manage_gameobject', {
+    action: 'create', name: 'PCBridge_Test', primitive_type: 'Cube',
+  })).isError, undefined);
+  await call('manage_gameobject', { action: 'modify', target: 'PCBridge_Test', position: [2, 1, 0] });
+  await call('manage_components', { action: 'add', target: 'PCBridge_Test', component_type: 'Rigidbody' });
+  assert.deepEqual((await call('manage_scene', { action: 'get_hierarchy' })).structuredContent.data, {
+    name: 'PCBridge_Test', position: [2, 1, 0], components: ['Rigidbody'],
+  });
+  assert.match((await call('unity_active_scene', {})).content[0].text, /Unity-Szene: Übung/);
+  assert.equal((await call('find_gameobjects', { search_term: 'Missing' })).isError, true);
+  assert.deepEqual((await call('manage_camera', { action: 'screenshot' })).content,
+    [{type: 'image', mimeType: 'image/png', data: 'AA=='}]);
+  assert.equal(observed.filter(entry => entry.method === 'initialize').length, 1);
+  assert.deepEqual(observed.filter(entry => entry.params?.name === 'manage_tools')
+    .map(entry => entry.params.arguments.group), catalog.groups);
+  assert.ok(observed.slice(1).every(entry => entry.session === 'fixture-session'));
 });
 
 test('expired work stays closed and a new pairing revokes the old device', async (t) => {
   const { call, db, mcp, pair } = prepareBridge(t);
   const first = await pair();
   await first('/api/device/poll', {});
-  db.prepare('UPDATE bridge_device SET last_seen = ?').run(Date.now() - 15_000);
+  db.prepare('UPDATE bridge_device SET last_seen = ?').run(Date.now() - 45_000);
   assert.match((await mcp('tools/call', { name: 'pc_ping' })).result.content[0].text, /offline/);
   const tokenHash = db.prepare('SELECT token_hash FROM bridge_device').get().token_hash;
   const id = 'deadbeef-dead-beef-dead-beefdeadbeef';
-  db.prepare(`INSERT INTO bridge_job VALUES (?, ?, 'pc_ping', ?, ?, ?, 'queued', NULL)`)
+  db.prepare(`INSERT INTO bridge_job (id, device_hash, tool, challenge, created_at, expires_at, state)
+    VALUES (?, ?, 'pc_ping', ?, ?, ?, 'queued')`)
     .run(id, tokenHash, '1234567890abcdef', 1, 2);
   assert.deepEqual(await first('/api/device/poll', {}), { job: null });
   await assert.rejects(first('/api/device/result', { id, result: { ok: true, challenge: '1234567890abcdef' } }),

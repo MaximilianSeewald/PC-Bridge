@@ -1,7 +1,10 @@
+import catalog from './unity-tools.json' with { type: 'json' };
+
 const endpoint = 'http://127.0.0.1:8080/mcp';
 const protocolVersion = '2025-11-25';
 const supportedVersions = new Set(['2025-03-26', '2025-06-18', protocolVersion]);
-const responseLimit = 64 * 1024;
+const responseLimit = 1_250_000;
+export const unityToolNames = new Set(catalog.tools.map(tool => tool.name));
 
 async function rpcResponse(response, id) {
   const type = response.headers.get('content-type')?.split(';', 1)[0];
@@ -40,11 +43,24 @@ async function rpcResponse(response, id) {
   }
 }
 
-export async function readUnityActiveScene(fetchImpl = fetch) {
-  const headers = { Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' };
-  const signal = AbortSignal.timeout(5_500);
+function toolFailure(message) {
+  return { isError: true, content: [{ type: 'text', text: message }] };
+}
 
-  async function send(method, params, id) {
+function toolPayload(output) {
+  if (output.structuredContent) return output.structuredContent.result ?? output.structuredContent;
+  try {
+    return JSON.parse(output.content.find(item => item.type === 'text')?.text ?? '{}');
+  } catch {
+    return {};
+  }
+}
+
+export function createUnityMcp(fetchImpl = fetch) {
+  let session;
+  let nextId = 0;
+
+  async function send(headers, signal, method, params, id) {
     const response = await fetchImpl(endpoint, {
       method: 'POST', headers, signal, redirect: 'error',
       body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
@@ -55,42 +71,82 @@ export async function readUnityActiveScene(fetchImpl = fetch) {
     const sessionId = response.headers.get('mcp-session-id');
     if (sessionId) headers['MCP-Session-Id'] = sessionId;
     const message = await rpcResponse(response, id);
-    if (message.jsonrpc !== '2.0' || message.id !== id || !message.result || message.error) {
-      throw new Error('Unity MCP meldet einen Aufruffehler.');
+    if (message.jsonrpc !== '2.0' || message.id !== id || (!message.result && !message.error)) {
+      throw new Error('Unity MCP meldet eine ungültige JSON-RPC-Antwort.');
     }
-    return message.result;
+    return message;
   }
 
-  try {
-    const init = await send('initialize', {
-      protocolVersion, capabilities: {}, clientInfo: { name: 'pc-bridge', version: '0.3.0' },
-    }, 1);
-    if (!supportedVersions.has(init.protocolVersion) || !init.capabilities?.tools) {
-      throw new Error('Dieser Unity-MCP-Server unterstützt die erwarteten Tools nicht.');
-    }
-    headers['MCP-Protocol-Version'] = init.protocolVersion;
-    await send('notifications/initialized');
-    const result = await send('tools/call', { name: 'manage_scene', arguments: { action: 'get_active' } }, 2);
-    if (result.isError) return { ok: false, error: 'unity_no_scene' };
-    const payload = result.structuredContent ??
-      JSON.parse(result.content?.find(item => item.type === 'text')?.text ?? '{}');
-    const reply = payload.result ?? payload;
-    if (reply.success !== true || !reply.data?.isLoaded) {
-      return { ok: false, error: 'unity_no_scene' };
-    }
-    const { name, path, isDirty, rootCount } = reply.data;
-    if (typeof name !== 'string' || typeof path !== 'string' || typeof isDirty !== 'boolean' ||
-        !Number.isSafeInteger(rootCount) || rootCount < 0) {
-      return { ok: false, error: 'unity_unavailable' };
-    }
-    return { ok: true, sceneName: name, scenePath: path, isDirty, rootCount };
-  } catch {
-    return { ok: false, error: 'unity_unavailable' };
-  } finally {
-    if (headers['MCP-Session-Id']) {
+  async function requestTool(headers, signal, name, args) {
+    const message = await send(headers, signal, 'tools/call', { name, arguments: args }, ++nextId);
+    if (message.error) return toolFailure(message.error.message || 'Unity MCP hat den Aufruf abgelehnt.');
+    const output = message.result;
+    if (!Array.isArray(output.content)) throw new Error('Unity MCP hat kein Tool-Ergebnis geliefert.');
+    const payload = toolPayload(output);
+    return payload?.success === false || typeof payload?.error === 'string'
+      ? { ...output, isError: true }
+      : output;
+  }
+
+  async function closeSession(headers) {
+    if (headers?.['MCP-Session-Id']) {
       await fetchImpl(endpoint, {
         method: 'DELETE', headers, redirect: 'error', signal: AbortSignal.timeout(500),
       }).then(response => response.body?.cancel()).catch(() => {});
     }
   }
+
+  async function openSession(signal) {
+    const headers = { Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' };
+    try {
+      const { result: init } = await send(headers, signal, 'initialize', {
+        protocolVersion, capabilities: {}, clientInfo: { name: 'pc-bridge', version: '0.4.0' },
+      }, ++nextId);
+      if (!supportedVersions.has(init?.protocolVersion) || !init.capabilities?.tools) {
+        throw new Error('Dieser Unity-MCP-Server unterstützt die erwarteten Tools nicht.');
+      }
+      headers['MCP-Protocol-Version'] = init.protocolVersion;
+      await send(headers, signal, 'notifications/initialized');
+      for (const group of catalog.groups) {
+        const result = await requestTool(headers, signal, 'manage_tools', { action: 'activate', group });
+        if (result.isError || toolPayload(result)?.activated !== group) {
+          throw new Error('Unity MCP konnte die Werkzeuggruppen nicht aktivieren.');
+        }
+      }
+      return headers;
+    } catch (error) {
+      await closeSession(headers);
+      throw error;
+    }
+  }
+
+  return {
+    async callTool(name, args, timeout = 29_000) {
+      if (!unityToolNames.has(name)) return toolFailure('Dieses Unity-MCP-Tool ist nicht im PC-Bridge-Katalog enthalten.');
+      const signal = AbortSignal.timeout(timeout);
+      try {
+        session ??= await openSession(signal);
+        return await requestTool(session, signal, name, args);
+      } catch (error) {
+        const previous = session;
+        session = undefined;
+        await closeSession(previous);
+        throw error;
+      }
+    },
+  };
+}
+
+export async function readUnityActiveScene(callTool) {
+  const result = await callTool('manage_scene', { action: 'get_active' }, 5_500);
+  const reply = toolPayload(result);
+  if (result.isError || reply?.success !== true || !reply.data?.isLoaded) {
+    return { ok: false, error: 'unity_no_scene' };
+  }
+  const { name, path, isDirty, rootCount } = reply.data;
+  if (typeof name !== 'string' || typeof path !== 'string' || typeof isDirty !== 'boolean' ||
+      !Number.isSafeInteger(rootCount) || rootCount < 0) {
+    return { ok: false, error: 'unity_unavailable' };
+  }
+  return { ok: true, sceneName: name, scenePath: path, isDirty, rootCount };
 }
