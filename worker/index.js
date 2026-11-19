@@ -1,4 +1,5 @@
 import catalog from '../client/unity-tools.json' with { type: 'json' };
+import gitTools from '../client/git-tools.json' with { type: 'json' };
 
 const bridgeTools = [
   {
@@ -32,11 +33,11 @@ const unityTools = catalog.tools.map(tool => {
     },
   };
 });
-const unityToolNames = new Set(unityTools.map(tool => tool.name));
-const tools = [...bridgeTools, ...unityTools];
+const forwardedToolNames = new Set([...unityTools, ...gitTools].map(tool => tool.name));
+const tools = [...bridgeTools, ...unityTools, ...gitTools];
 
 const protocolVersion = '2026-07-28';
-const release = '0.4.0';
+const release = '0.5.0';
 const onlineWindow = 40_000;
 const argumentLimit = 96_000;
 const resultLimit = 1_600_000;
@@ -168,7 +169,7 @@ function cleanResult(result, job) {
         typeof isDirty !== 'boolean' || !Number.isSafeInteger(rootCount) || rootCount < 0) return null;
     return { ok: true, sceneName, scenePath, isDirty, rootCount };
   }
-  if (!unityToolNames.has(job.tool)) return null;
+  if (!forwardedToolNames.has(job.tool)) return null;
   const { content, structuredContent, isError } = result.output ?? {};
   if (!Array.isArray(content) || !content.every(block => mcpContentTypes.has(block?.type)) ||
       (structuredContent !== undefined && !record(structuredContent)) ||
@@ -261,7 +262,7 @@ async function runJob(env, tool, args) {
 
   const id = crypto.randomUUID();
   const challenge = tool === 'pc_ping' ? hex(crypto.getRandomValues(new Uint8Array(8))) : null;
-  const waitTime = unityToolNames.has(tool) ? 36_000 : 9_000;
+  const waitTime = forwardedToolNames.has(tool) ? 36_000 : 9_000;
   const pollInterval = waitTime === 36_000 ? 950 : 350;
   const expiresAt = now + waitTime;
   const queued = await env.DB.prepare(
@@ -335,7 +336,7 @@ async function mcp(request, env) {
       const name = message.params?.name;
       const args = message.params?.arguments ?? {};
       if (!tools.some((tool) => tool.name === name)) return error(-32602, 'Unbekanntes Werkzeug');
-      if (!record(args) || (!unityToolNames.has(name) && Object.keys(args).length)) {
+      if (!record(args) || (!forwardedToolNames.has(name) && Object.keys(args).length)) {
         return error(-32602, 'Ungültige Parameter für dieses Werkzeug.');
       }
       return reply(await runJob(env, name, args));

@@ -48,3 +48,42 @@ und gib diesen Prompt ein.
 
 Prüfe danach einmal im Editor, ob der Würfel in der Hierarchie steht
 und der Inspector die neue Position und den Rigidbody zeigt.
+
+## Git für ContinueWork einrichten
+
+1. Installiere Git für Windows und klone das GitHub-Repository des Spiels.
+   Öffne in Unity diesen Checkout. `Assets/`, `Packages/` und
+   `ProjectSettings/` liegen direkt an der Git-Wurzel. Versioniere
+   Unity-`.meta`-Dateien und ignoriere die generierten Ordner wie
+   `Library/`, `Temp/` und `Logs/`.
+2. Kopiere `pc-bridge.config.example.json` als `pc-bridge.config.json`
+   neben `PC-Bridge.cmd`. Setze `projectPath` auf den absoluten Pfad
+   dieses Checkouts, `repository` auf `GitHubName/MeinSpiel` und
+   `baseBranch` auf den Basisbranch. Die Fetch- und Push-URL von
+   `origin` müssen auf dieses Repository zeigen. GitHub-Zugriff über
+   HTTPS und Git Credential Manager oder über SSH einmal lokal einrichten.
+   Setze auch Git `user.name` und `user.email` im Checkout.
+3. Starte den aktualisierten Windows-Client. Öffne den ContinueWork-Chat
+   mit dem aktualisierten PC-Bridge-Plugin.
+
+| Werkzeug | Aufgabe |
+| --- | --- |
+| `project_git_status` | Lokalen Branch, HEAD und Dateistatus abfragen |
+| `project_git_diff` | Änderungen an versionierten Dateien gegen HEAD lesen |
+| `project_git_prepare` | Feature-Branch vom aktuellen GitHub-Basisbranch erstellen oder vorhandene Historie per Fast-Forward fortsetzen |
+| `project_git_commit` | Explizit ausgewählte Dateien auf dem erwarteten Branch und HEAD committen |
+| `project_git_push` | Den exakten getesteten SHA auf denselben Feature-Branch pushen |
+
+Ein Durchlauf beginnt mit `project_git_status` und `project_git_prepare`.
+Danach Unity mit `refresh_unity` aktualisieren, die Änderungen im Editor
+speichern, kompilieren und testen. C# lässt sich mit `create_script`,
+`script_apply_edits` und `manage_script` bearbeiten. Nach der Prüfung
+Dateiliste und HEAD erneut lesen, nötige `.meta`-Dateien einbeziehen
+und committen. Den SHA des Commits an `project_git_push` geben und für
+den GitHub Pull Request oder die Übergabe im ContinueWork-Issue verwenden.
+
+Schreibaktionen prüfen den in Unity MCP ausgewählten Checkout, den
+Editor-Modus und ungespeicherte Szenen oder Prefabs. Branchwechsel und
+Push setzen einen sauberen Checkout voraus. Der Basisbranch wird über
+den Pull Request aktualisiert. PC, Unity, Unity MCP und PC-Bridge
+müssen während des Durchlaufs erreichbar bleiben.

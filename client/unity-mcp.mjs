@@ -47,7 +47,7 @@ function toolFailure(message) {
   return { isError: true, content: [{ type: 'text', text: message }] };
 }
 
-function toolPayload(output) {
+export function toolPayload(output) {
   if (output.structuredContent) return output.structuredContent.result ?? output.structuredContent;
   try {
     return JSON.parse(output.content.find(item => item.type === 'text')?.text ?? '{}');
@@ -100,7 +100,7 @@ export function createUnityMcp(fetchImpl = fetch) {
     const headers = { Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' };
     try {
       const { result: init } = await send(headers, signal, 'initialize', {
-        protocolVersion, capabilities: {}, clientInfo: { name: 'pc-bridge', version: '0.4.0' },
+        protocolVersion, capabilities: {}, clientInfo: { name: 'pc-bridge', version: '0.5.0' },
       }, ++nextId);
       if (!supportedVersions.has(init?.protocolVersion) || !init.capabilities?.tools) {
         throw new Error('Dieser Unity-MCP-Server unterstützt die erwarteten Tools nicht.');
@@ -120,19 +120,29 @@ export function createUnityMcp(fetchImpl = fetch) {
     }
   }
 
+  async function withSession(operation, signal) {
+    try {
+      session ??= await openSession(signal);
+      return await operation(session);
+    } catch (error) {
+      const previous = session;
+      session = undefined;
+      await closeSession(previous);
+      throw error;
+    }
+  }
+
   return {
     async callTool(name, args, timeout = 29_000) {
       if (!unityToolNames.has(name)) return toolFailure('Dieses Unity-MCP-Tool ist nicht im PC-Bridge-Katalog enthalten.');
-      const signal = AbortSignal.timeout(timeout);
-      try {
-        session ??= await openSession(signal);
-        return await requestTool(session, signal, name, args);
-      } catch (error) {
-        const previous = session;
-        session = undefined;
-        await closeSession(previous);
-        throw error;
-      }
+      const signal = typeof timeout === 'number' ? AbortSignal.timeout(timeout) : timeout;
+      return withSession(headers => requestTool(headers, signal, name, args), signal);
+    },
+    async readResource(uri, signal) {
+      const reply = await withSession(headers => send(headers, signal, 'resources/read', { uri }, ++nextId), signal);
+      const content = reply.result?.contents?.find(entry => entry.uri === uri && typeof entry.text === 'string');
+      if (!content) throw new Error('Unity MCP hat den Editorstatus nicht geliefert.');
+      return JSON.parse(content.text);
     },
   };
 }

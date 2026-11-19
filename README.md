@@ -14,6 +14,8 @@ Die private ChatGPT Site hostet den Web-MCP-Endpunkt und die Auftragswarteschlan
 in D1. Der Windows-Client holt Aufträge per HTTPS ab und übergibt sie
 an den lokalen Unity-MCP-Server. So laufen auch Änderungen im lokalen
 Editor. Die private Site und die Gerätekopplung regeln den Zugriff.
+Die `project_git_*`-Werkzeuge verwenden Git direkt im konfigurierten
+Unity-Checkout unter Windows. [Git für ContinueWork einrichten](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#git-für-continuework-einrichten)
 
 ## Unity-Projektdaten
 
@@ -89,7 +91,7 @@ den PC. Kopiere ihn direkt von deiner privaten Site in den Client. Über
    herunter und entpacke es separat. Öffne das Quellprojekt deiner bestehenden
    Site in ChatGPT Work oder Codex.
 2. Übernimm `worker/`, `drizzle/`, `client/unity-tools.json`,
-   `build.mjs` und `package.json` aus
+   `client/git-tools.json`, `build.mjs` und `package.json` aus
    dem Release in das bestehende Quellprojekt. Verwende die vorhandene
    `.openai/hosting.json` als Grundlage. Ihre `project_id` und die
    D1-Bindung identifizieren die Site und ihre Datenbank. Die Vorlage im ZIP

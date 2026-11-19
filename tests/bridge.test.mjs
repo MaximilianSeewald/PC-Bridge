@@ -9,6 +9,7 @@ import worker from '../worker/index.js';
 import { deviceClient, parsePairingCode, runJob } from '../client/pc-bridge.mjs';
 import { createUnityMcp } from '../client/unity-mcp.mjs';
 import catalog from '../client/unity-tools.json' with { type: 'json' };
+import gitTools from '../client/git-tools.json' with { type: 'json' };
 
 const origin = 'https://bridge-test.chatgpt.site';
 const owner = 'owner@example.com';
@@ -75,8 +76,8 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   assert.deepEqual(discovery.result.supportedVersions, ['2026-07-28']);
   const list = await mcp('tools/list', {}, {});
   const actual = list.result.tools;
-  assert.deepEqual(actual.map(tool => tool.name), ['pc_ping', 'unity_active_scene', ...catalog.tools.map(tool => tool.name)]);
-  assert.deepEqual(actual.slice(2).map(tool => tool.inputSchema), catalog.tools.map(tool => tool.inputSchema));
+  assert.deepEqual(actual.map(tool => tool.name), ['pc_ping', 'unity_active_scene', ...catalog.tools.map(tool => tool.name), ...gitTools.map(tool => tool.name)]);
+  assert.deepEqual(actual.slice(2).map(tool => tool.inputSchema), [...catalog.tools, ...gitTools].map(tool => tool.inputSchema));
   assert.equal(actual.find(tool => tool.name === 'manage_gameobject').annotations.readOnlyHint, false);
   assert.equal(actual.find(tool => tool.name === 'manage_gameobject').annotations.destructiveHint, true);
   assert.equal((await mcp('tools/call', { name: 'pc_ping' }, {})).result.isError, true);
@@ -98,7 +99,7 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   assert.match((await mcp('tools/call', { name: 'pc_ping' })).result.content[0].text, /kein PC gekoppelt/);
 });
 
-async function roundTrip(mcp, device, name, args, callUnity) {
+async function roundTrip(mcp, device, name, args, callUnity, callGit) {
   const pending = mcp('tools/call', { name, arguments: args });
   let job;
   for (let attempt = 0; attempt < 30 && !job; attempt += 1) {
@@ -112,7 +113,7 @@ async function roundTrip(mcp, device, name, args, callUnity) {
     await assert.rejects(device('/api/device/result', { id: job.id, result: { ok: true, challenge: 'wrong' } }),
       { status: 400 });
   }
-  const result = await runJob(job, callUnity);
+  const result = await runJob(job, callUnity, callGit);
   assert.deepEqual(await device('/api/device/result', { id: job.id, result }), { accepted: true });
   return { job, reply: (await pending).result };
 }
@@ -165,6 +166,9 @@ test('create, move, add a component and read back the scene in a single Unity se
     let result;
     if (initialized) {
       result = { protocolVersion: '2025-06-18', capabilities: { tools: {} } };
+    } else if (message.method === 'resources/read') {
+      result = { contents: [{ uri: message.params.uri, mimeType: 'application/json',
+        text: JSON.stringify({ success: true, data: { projectRoot: 'C:/Unity/Game' } }) }] };
     } else {
       let payload;
       if (name === 'manage_tools') payload = { activated: args.group };
@@ -203,7 +207,7 @@ test('create, move, add a component and read back the scene in a single Unity se
   unityServer.listen(0, '127.0.0.1');
   await once(unityServer, 'listening');
   t.after(() => new Promise(resolve => unityServer.close(resolve)));
-  const { callTool } = createUnityMcp((url, options) => {
+  const { callTool, readResource } = createUnityMcp((url, options) => {
     assert.equal(url, 'http://127.0.0.1:8080/mcp');
     return fetch(`http://127.0.0.1:${unityServer.address().port}/mcp`, options);
   });
@@ -221,6 +225,9 @@ test('create, move, add a component and read back the scene in a single Unity se
   assert.equal((await call('find_gameobjects', { search_term: 'Missing' })).isError, true);
   assert.deepEqual((await call('manage_camera', { action: 'screenshot' })).content,
     [{type: 'image', mimeType: 'image/png', data: 'AA=='}]);
+  assert.deepEqual(await readResource('mcpforunity://project/info'), {
+    success: true, data: { projectRoot: 'C:/Unity/Game' },
+  });
   assert.equal(observed.filter(entry => entry.method === 'initialize').length, 1);
   assert.deepEqual(observed.filter(entry => entry.params?.name === 'manage_tools')
     .map(entry => entry.params.arguments.group), catalog.groups);
@@ -262,4 +269,20 @@ test('malformed pairing codes and unknown jobs are rejected locally', async () =
     'https://second-instance.chatgpt.site');
   assert.deepEqual(await runJob({ tool: 'shell', expires_at: Date.now() + 2000 }, () => assert.fail('unexpected local call')),
     { ok: false, error: 'invalid_job' });
+});
+
+test('Git actions and exact commit inputs round-trip through the private relay', async (t) => {
+  const { mcp, pair } = prepareBridge(t);
+  const device = await pair();
+  await device('/api/device/poll', {});
+  const args = { branch: 'feature/move', expectedHead: 'ab'.repeat(20) };
+  const data = { ...args, pushed: true };
+  const output = { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data, isError: false };
+  const { reply } = await roundTrip(mcp, device, 'project_git_push', args, null, async (name, received, signal) => {
+    assert.equal(name, 'project_git_push');
+    assert.deepEqual(received, args);
+    assert.ok(signal instanceof AbortSignal);
+    return output;
+  });
+  assert.deepEqual(reply, output);
 });
