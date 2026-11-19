@@ -7,6 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import worker from '../worker/index.js';
+import { startLocalMcp } from '../client/mcp-client.mjs';
 import { deviceClient, parsePairingCode, runJob } from '../client/pc-bridge.mjs';
 
 const origin = 'https://bridge-test.chatgpt.site';
@@ -43,6 +44,7 @@ function prepareBridge(t) {
     },
   };
   const env = { DB: d1, BRIDGE_OWNER_EMAIL: owner, BRIDGE_SITES_TOKEN: bypassToken, BRIDGE_ORIGIN: origin };
+  env.BRIDGE_PLUGIN_ARCHIVE = btoa('PK-test-archive');
   const call = (path, options) => worker.fetch(new Request(new URL(path, origin), options), env);
   const mcp = async (method, params, headers = ownerHeader) => {
     const result = await call('/mcp', { method: 'POST', headers, body: JSON.stringify({
@@ -79,6 +81,12 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   assert.equal((await call('/pair', { method: 'POST', headers: { ...ownerHeader, Origin: 'https://unrelated.example' } })).status, 403);
   assert.equal((await call('/pair', { method: 'POST', headers: { ...browserForm, 'Sec-Fetch-Site': 'cross-site' } })).status, 403);
   assert.equal((await call('/pair', { method: 'POST', headers: { ...ownerHeader, Origin: 'null' } })).status, 403);
+  assert.equal((await call('/plugin.zip')).status, 403);
+  const dashboard = await call('/', { headers: ownerHeader });
+  assert.match(await dashboard.text(), /href="\/plugin\.zip"/);
+  const archive = await call('/plugin.zip', { headers: ownerHeader });
+  assert.equal(archive.headers.get('content-type'), 'application/zip');
+  assert.equal(await archive.text(), 'PK-test-archive');
   assert.equal((await call('/api/device/poll', { method: 'POST', headers: ownerHeader })).status, 401);
   assert.match((await mcp('tools/call', { name: 'pc_ping' })).result.content[0].text, /kein PC gekoppelt/);
 });
@@ -103,6 +111,14 @@ test('paired client claims once and returns a fresh ping and real Git status', a
   writeFileSync(join(repo, 'new.txt'), 'untracked\n');
   mkdirSync(join(repo, 'subfolder'));
 
+  const local = await startLocalMcp(repo);
+  t.after(local.close);
+  const discovered = (await local.request('tools/list', {})).tools;
+  assert.deepEqual(discovered.map((tool) => tool.name), ['pc_ping', 'epoch_git_status']);
+  assert.ok(discovered.every((tool) => tool.annotations.readOnlyHint));
+  assert.deepEqual(await local.callTool('epoch_git_status', { path: '/outside' }),
+    { ok: false, error: 'invalid_job' });
+
   async function roundTrip(tool) {
     const pending = mcp('tools/call', { name: tool });
     let job;
@@ -116,7 +132,7 @@ test('paired client claims once and returns a fresh ping and real Git status', a
       await assert.rejects(device('/api/device/result', { id: job.id, result: { ok: true, challenge: 'wrong' } }),
         { status: 400 });
     }
-    const result = await runJob(job, repo);
+    const result = await runJob(job, local.callTool);
     assert.deepEqual(await device('/api/device/result', { id: job.id, result }), { accepted: true });
     const reply = (await pending).result;
     assert.equal(reply.isError, undefined);
@@ -130,9 +146,13 @@ test('paired client claims once and returns a fresh ping and real Git status', a
   const status = await roundTrip('epoch_git_status');
   assert.equal(status.text, 'Branch: bridge-test\nVorgemerkt: 1\nNicht vorgemerkt: 1\nUnversioniert: 1\nKonflikte: 0');
   assert.doesNotMatch(status.text, /renamed|tracked\.txt|pc-bridge-git/);
-  assert.deepEqual(await runJob({ ...status.job, expires_at: Date.now() + 1000 }, join(repo, 'subfolder')),
-    { ok: false, error: 'repo_invalid' });
-  assert.deepEqual(await runJob({ ...status.job, expires_at: 1 }, repo), { ok: false, error: 'expired' });
+  const subfolder = await startLocalMcp(join(repo, 'subfolder'));
+  t.after(subfolder.close);
+  assert.deepEqual(await subfolder.callTool('epoch_git_status', {}), { ok: false, error: 'repo_invalid' });
+  assert.deepEqual(await runJob({ ...status.job, expires_at: 1 }, local.callTool), { ok: false, error: 'expired' });
+  local.close();
+  assert.deepEqual(await runJob({ ...ping.job, expires_at: Date.now() + 1000 }, local.callTool),
+    { ok: false, error: 'mcp_unavailable' });
 });
 
 test('expired work stays closed and a new pairing revokes the old device', async (t) => {
@@ -167,6 +187,6 @@ test('malformed pairing codes and unknown jobs are rejected locally', async () =
   }
   assert.equal(parsePairingCode(encodeCode('https://second-instance.chatgpt.site/')).siteOrigin,
     'https://second-instance.chatgpt.site');
-  assert.deepEqual(await runJob({ tool: 'shell', expires_at: Date.now() + 2000 }, process.cwd()),
+  assert.deepEqual(await runJob({ tool: 'shell', expires_at: Date.now() + 2000 }, () => assert.fail('unexpected local call')),
     { ok: false, error: 'invalid_job' });
 });
