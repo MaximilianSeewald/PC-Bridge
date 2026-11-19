@@ -270,7 +270,7 @@ function mcpResult(tool, result) {
       expired: 'Der Auftrag ist abgelaufen.',
       mcp_unavailable: 'Der lokale MCP-Server ist nicht verfügbar. Starte PC-Bridge.cmd erneut.',
       unity_disabled: 'Starte den Windows-Client mit PC-Bridge.cmd --unity, um Unity-Abfragen zu aktivieren.',
-      unity_unavailable: 'Unity MCP ist nicht erreichbar. Prüfe den lokalen HTTP-Server auf 127.0.0.1:8080.',
+      unity_unavailable: 'Unity MCP hat keine verwertbare Antwort geliefert. Prüfe den lokalen HTTP-Server auf 127.0.0.1:8080 und seine Verbindung zum Unity-Editor.',
       unity_no_scene: 'Unity MCP meldet keine aktive Szene. Prüfe, ob dein Editor mit dem MCP-Server verbunden ist.',
     };
     return mcpError(errors[result.error] ?? 'Der Windows-Client meldet einen Fehler.');
