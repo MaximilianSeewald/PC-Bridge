@@ -1,7 +1,4 @@
-import { startLocalMcp } from './mcp-client.mjs';
-import { readUnityActiveScene } from './unity-mcp.mjs';
-import { realpath } from 'node:fs/promises';
-import { isAbsolute } from 'node:path';
+import { createUnityMcp, readUnityActiveScene, unityToolNames } from './unity-mcp.mjs';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -37,20 +34,26 @@ export function parsePairingCode(input) {
   return { ...data, siteOrigin: chatGptSiteOrigin(data.siteOrigin) };
 }
 
-export async function runJob(job, callTool, unity = null) {
+export async function runJob(job, callUnity) {
   if (!job || !Number.isFinite(job.expires_at)) return { ok: false, error: 'invalid_job' };
   if (Date.now() >= job.expires_at) return { ok: false, error: 'expired' };
 
-  if (job.tool === 'unity_active_scene') {
-    return unity ? unity() : { ok: false, error: 'unity_disabled' };
+  if (job.tool === 'pc_ping') {
+    return typeof job.challenge === 'string' && /^[a-f0-9]{16}$/.test(job.challenge)
+      ? { ok: true, challenge: job.challenge }
+      : { ok: false, error: 'invalid_job' };
   }
 
-  const args = { pc_ping: { challenge: job.challenge }, epoch_git_status: {} };
-  if (!Object.hasOwn(args, job.tool)) return { ok: false, error: 'invalid_job' };
   try {
-    return await callTool(job.tool, args[job.tool]);
+    if (job.tool === 'unity_active_scene') return await readUnityActiveScene(callUnity);
+    if (!unityToolNames.has(job.tool) || !job.arguments || typeof job.arguments !== 'object' ||
+        Array.isArray(job.arguments)) return { ok: false, error: 'invalid_job' };
+    const remaining = job.expires_at - Date.now() - 1_000;
+    if (remaining <= 0) return { ok: false, error: 'expired' };
+    const output = await callUnity(job.tool, job.arguments, Math.min(29_000, remaining));
+    return { ok: true, output };
   } catch {
-    return { ok: false, error: 'mcp_unavailable' };
+    return { ok: false, error: 'unity_unavailable' };
   }
 }
 
@@ -79,33 +82,17 @@ export function deviceClient(origin, credentials, fetchImpl = fetch) {
   };
 }
 
-async function runClient(ask, unityEnabled) {
+async function runClient(ask) {
   console.log('PC-Bridge | Windows-Client für ChatGPT Work');
   const pairingCode = await ask('Kopplungscode von der privaten Site einfügen: ', true);
   const credentials = parsePairingCode(pairingCode);
   console.log(`Private Site: ${credentials.siteOrigin}`);
-  let repo;
-  const input = await ask('Pfad zur lokalen EPOCH-Kopie (leer für reinen Verbindungstest): ', false);
-  if (input.trim()) {
-    const path = input.trim().replace(/^"(.*)"$/, '$1');
-    if (!isAbsolute(path)) throw new Error('Bitte gib den vollständigen Pfad zum EPOCH-Ordner an.');
-    repo = await realpath(path).catch(() => { throw new Error('Der EPOCH-Ordner wurde nicht gefunden.'); });
-  }
-
-  const mcp = await startLocalMcp(repo);
-  try {
-    if (repo && !(await mcp.callTool('epoch_git_status', {})).ok) {
-      throw new Error('Git oder der Hauptordner der EPOCH-Kopie wurde nicht erkannt.');
-    }
-    console.log('Lokaler MCP-Server gestartet. Strg+C beendet die Verbindung.');
-    if (unityEnabled) console.log('Unity-MCP-Lesezugriff über 127.0.0.1:8080 aktiviert.');
-    await pollSite(deviceClient(credentials.siteOrigin, credentials), mcp, unityEnabled ? readUnityActiveScene : null);
-  } finally {
-    mcp.close();
-  }
+  const unity = createUnityMcp();
+  console.log('Unity MCP über 127.0.0.1:8080. Strg+C beendet die Verbindung.');
+  await pollSite(deviceClient(credentials.siteOrigin, credentials), unity.callTool);
 }
 
-async function pollSite(call, mcp, unity) {
+async function pollSite(call, callUnity) {
   let online = false;
   while (true) {
     try {
@@ -113,10 +100,12 @@ async function pollSite(call, mcp, unity) {
       if (!online) console.log('Verbunden. Rufe jetzt @PC-Bridge in ChatGPT Work auf.');
       online = true;
       if (job) {
-        const result = await runJob(job, mcp.callTool, unity);
+        const result = await runJob(job, callUnity);
         try {
           await call('/api/device/result', { id: job.id, result });
-          console.log(result.ok ? `Auftrag erledigt: ${job.tool}` : `Auftrag abgewiesen: ${job.tool}`);
+          console.log(result.ok && !result.output?.isError
+            ? `Auftrag erledigt: ${job.tool}`
+            : `Auftrag mit Fehler: ${job.tool}`);
         } catch (error) {
           if (error.status !== 409) throw error;
           console.log('Der Auftrag ist auf der Site bereits geschlossen.');
@@ -130,7 +119,6 @@ async function pollSite(call, mcp, unity) {
       online = false;
       await delay(3_500);
     }
-    if (!mcp.isRunning()) throw new Error('Der lokale MCP-Server wurde beendet. Starte PC-Bridge.cmd erneut.');
     await delay(2_000);
   }
 }
@@ -148,7 +136,7 @@ async function ask(prompt, hidden) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runClient(ask, process.argv.includes('--unity')).catch((error) => {
+  runClient(ask).catch((error) => {
     console.error(error.message);
     process.exitCode = 1;
   });
