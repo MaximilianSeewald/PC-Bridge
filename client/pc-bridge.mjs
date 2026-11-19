@@ -1,4 +1,6 @@
 import { createUnityMcp, readUnityActiveScene, unityToolNames } from './unity-mcp.mjs';
+import { createProjectGit, gitToolNames } from './project-git.mjs';
+import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -34,7 +36,7 @@ export function parsePairingCode(input) {
   return { ...data, siteOrigin: chatGptSiteOrigin(data.siteOrigin) };
 }
 
-export async function runJob(job, callUnity) {
+export async function runJob(job, callUnity, callGit) {
   if (!job || !Number.isFinite(job.expires_at)) return { ok: false, error: 'invalid_job' };
   if (Date.now() >= job.expires_at) return { ok: false, error: 'expired' };
 
@@ -46,11 +48,15 @@ export async function runJob(job, callUnity) {
 
   try {
     if (job.tool === 'unity_active_scene') return await readUnityActiveScene(callUnity);
-    if (!unityToolNames.has(job.tool) || !job.arguments || typeof job.arguments !== 'object' ||
+    const isGit = gitToolNames.has(job.tool);
+    if ((!isGit && !unityToolNames.has(job.tool)) || !job.arguments || typeof job.arguments !== 'object' ||
         Array.isArray(job.arguments)) return { ok: false, error: 'invalid_job' };
     const remaining = job.expires_at - Date.now() - 1_000;
     if (remaining <= 0) return { ok: false, error: 'expired' };
-    const output = await callUnity(job.tool, job.arguments, Math.min(29_000, remaining));
+    const timeout = Math.min(29_000, remaining);
+    const output = isGit
+      ? await callGit(job.tool, job.arguments, AbortSignal.timeout(timeout))
+      : await callUnity(job.tool, job.arguments, timeout);
     return { ok: true, output };
   } catch {
     return { ok: false, error: 'unity_unavailable' };
@@ -82,17 +88,28 @@ export function deviceClient(origin, credentials, fetchImpl = fetch) {
   };
 }
 
+async function readGitConfig() {
+  const path = new URL('./pc-bridge.config.json', import.meta.url);
+  try {
+    return JSON.parse((await readFile(path, 'utf8')).replace(/^\uFEFF/, ''));
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw new Error('pc-bridge.config.json konnte nicht gelesen werden. Prüfe die JSON-Datei.');
+  }
+}
+
 async function runClient(ask) {
   console.log('PC-Bridge | Windows-Client für ChatGPT Work');
   const pairingCode = await ask('Kopplungscode von der privaten Site einfügen: ', true);
   const credentials = parsePairingCode(pairingCode);
   console.log(`Private Site: ${credentials.siteOrigin}`);
   const unity = createUnityMcp();
+  const git = createProjectGit(await readGitConfig(), unity);
   console.log('Unity MCP über 127.0.0.1:8080. Strg+C beendet die Verbindung.');
-  await pollSite(deviceClient(credentials.siteOrigin, credentials), unity.callTool);
+  await pollSite(deviceClient(credentials.siteOrigin, credentials), unity.callTool, git);
 }
 
-async function pollSite(call, callUnity) {
+async function pollSite(call, callUnity, callGit) {
   let online = false;
   while (true) {
     try {
@@ -100,7 +117,7 @@ async function pollSite(call, callUnity) {
       if (!online) console.log('Verbunden. Rufe jetzt @PC-Bridge in ChatGPT Work auf.');
       online = true;
       if (job) {
-        const result = await runJob(job, callUnity);
+        const result = await runJob(job, callUnity, callGit);
         try {
           await call('/api/device/result', { id: job.id, result });
           console.log(result.ok && !result.output?.isError

@@ -1,0 +1,32 @@
+[
+  {
+    "name": "project_git_status",
+    "description": "Read the configured Unity repository, current branch, exact HEAD and local file changes. Use before starting or resuming a ContinueWork task.",
+    "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+    "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false}
+  },
+  {
+    "name": "project_git_diff",
+    "description": "Read the combined staged and unstaged diff of tracked files against HEAD in the configured Unity project. The returned diff can be truncated.",
+    "inputSchema": {"type": "object", "properties": {"files": {"type": "array", "items": {"type": "string"}, "maxItems": 100, "description": "Optional exact project-relative paths, using forward slashes."}}, "additionalProperties": false},
+    "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false}
+  },
+  {
+    "name": "project_git_prepare",
+    "description": "Fetch origin and prepare the requested feature branch in the open Unity checkout. New branches start at the configured base branch. Existing branches only fast-forward when possible.",
+    "inputSchema": {"type": "object", "properties": {"branch": {"type": "string", "description": "Exact feature branch agreed in the GitHub issue."}}, "required": ["branch"], "additionalProperties": false},
+    "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true}
+  },
+  {
+    "name": "project_git_commit",
+    "description": "Commit explicitly selected local Unity project files on the expected feature branch and HEAD after saving and testing in Unity. Include changed .meta companions where applicable.",
+    "inputSchema": {"type": "object", "properties": {"branch": {"type": "string"}, "expectedHead": {"type": "string", "description": "Exact HEAD returned by project_git_status."}, "message": {"type": "string", "maxLength": 300}, "files": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": 100, "description": "Exact project-relative changed files, not folders."}}, "required": ["branch", "expectedHead", "message", "files"], "additionalProperties": false},
+    "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": false}
+  },
+  {
+    "name": "project_git_push",
+    "description": "Push exactly the tested commit from the clean local Unity checkout to the matching feature branch on the configured origin. Git rejects non-fast-forward pushes.",
+    "inputSchema": {"type": "object", "properties": {"branch": {"type": "string"}, "expectedHead": {"type": "string", "description": "Exact tested commit SHA to publish."}}, "required": ["branch", "expectedHead"], "additionalProperties": false},
+    "annotations": {"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true}
+  }
+]
