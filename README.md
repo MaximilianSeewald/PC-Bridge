@@ -7,17 +7,28 @@ Windows-PC. Der Prototyp bietet zwei lesende MCP-Werkzeuge.
 - `epoch_git_status` zeigt den Branch und die Änderungszahlen eines lokal ausgewählten
   Git-Checkouts, beispielsweise von EPOCH.
 
-Die private ChatGPT Site hostet den MCP-Server und eine kleine Auftragswarteschlange
-in D1. Der Windows-Client ruft die Aufträge ausgehend per HTTPS ab. GitHub dient
-der Versionsverwaltung und stellt den Quellcode zum Klonen bereit.
+Die private ChatGPT Site hostet den Web-MCP-Endpunkt und die Auftragswarteschlange
+in D1. Der Windows-Client holt Aufträge per HTTPS ab und ruft einen zweiten,
+lokalen MCP-Server über Standard-Ein- und Ausgabe auf. Der lokale Server führt
+die Werkzeuge aus.
+
+## Pakete
+
+Die drei Archive stehen unter [GitHub Releases](https://github.com/MaximilianSeewald/PC-Bridge/releases).
+
+| Paket | Verwendung |
+| --- | --- |
+| `PC-Bridge-ChatGPT-Plugin-Baukasten.zip` | Erstellt das installierbare ZIP für die App-ID deiner eigenen Site. [Anleitung](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/plugin). |
+| `PC-Bridge-Sites-Relay.zip` | Enthält den Worker, den Build und die D1-Migration für eine eigene private Site. |
+| `PC-Bridge-Windows-MCP.zip` | Enthält das Startskript, den Windows-Client und den lokalen MCP-Server. [Anleitung](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client). |
 
 ## Eigene private Site einrichten
 
 Du brauchst Zugang zu ChatGPT Sites und zur Erstellung eines privaten Site-Plugins.
 Auf Windows brauchst du Node.js 22 oder neuer. Git wird für die Statusabfrage benötigt.
 
-1. Klone das Repository und öffne den Ordner in der ChatGPT-Desktop-App als
-   lokales Projekt. Prüfe den Build im Hauptordner mit `npm test` und `npm run build`.
+1. Klone das Repository oder entpacke das Relay-ZIP. Öffne den Ordner in der ChatGPT-Desktop-App als
+   lokales Projekt. Prüfe den Build im Hauptordner mit `npm run build`.
 2. Erstelle aus dem lokalen Projekt eine neue, nur für dich zugängliche
    ChatGPT Site. Der Build-Befehl ist `npm run build`. Der Worker liegt danach
    unter `dist/server/index.js`. Die Hosting-Konfiguration in
@@ -50,7 +61,9 @@ Auf Windows brauchst du Node.js 22 oder neuer. Git wird für die Statusabfrage b
    [Servicezugriff auf private Sites](https://learn.chatgpt.com/docs/sites/data-and-connections#call-a-private-site-with-a-siwc-bypass-token)
 4. Installiere und verbinde das erzeugte Plugin bei Bedarf unter **Plugins →
    Persönlich → Von dir erstellt**. Folge dann der
-   [Anleitung für den Windows-Client](client/README.md).
+   [Anleitung für den Windows-Client](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client).
+   Für den Import per ZIP verwende den Plugin-Baukasten mit der App-ID
+   dieses Site-Plugins.
 
 Der Kopplungscode enthält die Adresse der Site und die Zugangsdaten für
 den PC. Kopiere ihn direkt von deiner privaten Site in den Client. Über
@@ -70,3 +83,5 @@ npm run build
 Die Tests verwenden SQLite im Arbeitsspeicher und einen temporären
 Git-Checkout. Die Live-Kopplung mit dem eigenen ChatGPT-Konto und
 Windows-PC prüfst du mit den Schritten im Client-Handbuch.
+
+Die drei Release-Archive lassen sich mit `python3 package-release.py` erstellen.
