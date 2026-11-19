@@ -1,4 +1,5 @@
 import { startLocalMcp } from './mcp-client.mjs';
+import { readUnityActiveScene } from './unity-mcp.mjs';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -36,9 +37,13 @@ export function parsePairingCode(input) {
   return { ...data, siteOrigin: chatGptSiteOrigin(data.siteOrigin) };
 }
 
-export async function runJob(job, callTool) {
+export async function runJob(job, callTool, unity = null) {
   if (!job || !Number.isFinite(job.expires_at)) return { ok: false, error: 'invalid_job' };
   if (Date.now() >= job.expires_at) return { ok: false, error: 'expired' };
+
+  if (job.tool === 'unity_active_scene') {
+    return unity ? unity() : { ok: false, error: 'unity_disabled' };
+  }
 
   const args = { pc_ping: { challenge: job.challenge }, epoch_git_status: {} };
   if (!Object.hasOwn(args, job.tool)) return { ok: false, error: 'invalid_job' };
@@ -74,7 +79,7 @@ export function deviceClient(origin, credentials, fetchImpl = fetch) {
   };
 }
 
-async function runClient(ask) {
+async function runClient(ask, unityEnabled) {
   console.log('PC-Bridge | Windows-Client für ChatGPT Work');
   const pairingCode = await ask('Kopplungscode von der privaten Site einfügen: ', true);
   const credentials = parsePairingCode(pairingCode);
@@ -93,13 +98,14 @@ async function runClient(ask) {
       throw new Error('Git oder der Hauptordner der EPOCH-Kopie wurde nicht erkannt.');
     }
     console.log('Lokaler MCP-Server gestartet. Strg+C beendet die Verbindung.');
-    await pollSite(deviceClient(credentials.siteOrigin, credentials), mcp);
+    if (unityEnabled) console.log('Unity-MCP-Lesezugriff über 127.0.0.1:8080 aktiviert.');
+    await pollSite(deviceClient(credentials.siteOrigin, credentials), mcp, unityEnabled ? readUnityActiveScene : null);
   } finally {
     mcp.close();
   }
 }
 
-async function pollSite(call, mcp) {
+async function pollSite(call, mcp, unity) {
   let online = false;
   while (true) {
     try {
@@ -107,7 +113,7 @@ async function pollSite(call, mcp) {
       if (!online) console.log('Verbunden. Rufe jetzt @PC-Bridge in ChatGPT Work auf.');
       online = true;
       if (job) {
-        const result = await runJob(job, mcp.callTool);
+        const result = await runJob(job, mcp.callTool, unity);
         try {
           await call('/api/device/result', { id: job.id, result });
           console.log(result.ok ? `Auftrag erledigt: ${job.tool}` : `Auftrag abgewiesen: ${job.tool}`);
@@ -142,7 +148,7 @@ async function ask(prompt, hidden) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runClient(ask).catch((error) => {
+  runClient(ask, process.argv.includes('--unity')).catch((error) => {
     console.error(error.message);
     process.exitCode = 1;
   });

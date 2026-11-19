@@ -9,6 +9,11 @@ const tools = [
     title: 'Lokalen EPOCH-Git-Status lesen',
     description: 'Liest Branch und Zahl der Änderungen aus der lokal auf dem gekoppelten PC konfigurierten EPOCH-Kopie.',
   },
+  {
+    name: 'unity_active_scene',
+    title: 'Aktive Unity-Szene lesen',
+    description: 'Liest Szenenname, projektbezogenen Pfad, Zahl der Objekte auf oberster Ebene und den Speicherstatus aus dem laufenden lokalen Unity-Editor.',
+  },
 ].map((tool) => ({
   ...tool,
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -16,12 +21,15 @@ const tools = [
 }));
 
 const protocolVersion = '2026-07-28';
-const release = '0.2.0';
+const release = '0.3.0';
 const onlineWindow = 12_000;
 const jobLifetime = 14_000;
 const responseHeaders = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 const encoder = new TextEncoder();
-const allowedErrors = new Set(['git_failed', 'repo_invalid', 'invalid_job', 'expired', 'mcp_unavailable']);
+const allowedErrors = new Set([
+  'git_failed', 'repo_invalid', 'invalid_job', 'expired', 'mcp_unavailable',
+  'unity_disabled', 'unity_unavailable', 'unity_no_scene',
+]);
 const deviceTokenPattern = /^[a-f0-9]{64}$/;
 
 function json(value, status = 200) {
@@ -133,6 +141,16 @@ function cleanResult(result, job) {
   if (result?.ok !== true) return null;
   if (job.tool === 'pc_ping') {
     return result.challenge === job.challenge ? { ok: true, challenge: job.challenge } : null;
+  }
+  if (job.tool === 'unity_active_scene') {
+    const { sceneName, scenePath, isDirty, rootCount } = result;
+    if (typeof sceneName !== 'string' || sceneName.length > 250 ||
+        typeof scenePath !== 'string' || scenePath.length > 500 ||
+        /[\x00-\x1f\x7f]/.test(sceneName + scenePath) ||
+        (scenePath && (!/^(Assets|Packages)\/.+\.unity$/i.test(scenePath) ||
+          scenePath.includes('\\') || scenePath.split('/').some(part => !part || part === '.' || part === '..'))) ||
+        typeof isDirty !== 'boolean' || !Number.isSafeInteger(rootCount) || rootCount < 0) return null;
+    return { ok: true, sceneName, scenePath, isDirty, rootCount };
   }
   const { branch, staged, unstaged, untracked, conflicts } = result;
   if (typeof branch !== 'string' || !branch || branch.length > 250 || /[\x00-\x1f\x7f]/.test(branch)) {
@@ -251,11 +269,19 @@ function mcpResult(tool, result) {
       invalid_job: 'Der Client hat den Auftrag abgelehnt.',
       expired: 'Der Auftrag ist abgelaufen.',
       mcp_unavailable: 'Der lokale MCP-Server ist nicht verfügbar. Starte PC-Bridge.cmd erneut.',
+      unity_disabled: 'Starte den Windows-Client mit PC-Bridge.cmd --unity, um Unity-Abfragen zu aktivieren.',
+      unity_unavailable: 'Unity MCP ist nicht erreichbar. Prüfe den lokalen HTTP-Server auf 127.0.0.1:8080.',
+      unity_no_scene: 'Unity MCP meldet keine aktive Szene. Prüfe, ob dein Editor mit dem MCP-Server verbunden ist.',
     };
     return mcpError(errors[result.error] ?? 'Der Windows-Client meldet einen Fehler.');
   }
   if (tool === 'pc_ping') {
     return { content: [{ type: 'text', text: `PC verbunden. Prüfwert vom Client: ${result.challenge}` }] };
+  }
+  if (tool === 'unity_active_scene') {
+    const { sceneName, scenePath, isDirty, rootCount } = result;
+    const text = `Unity-Szene: ${sceneName || 'Ohne Namen'}\nPfad: ${scenePath || 'Noch ohne Datei'}\nObjekte auf oberster Ebene: ${rootCount}\nUngespeicherte Änderungen: ${isDirty ? 'Ja' : 'Nein'}`;
+    return { content: [{ type: 'text', text }] };
   }
   const { branch, staged, unstaged, untracked, conflicts } = result;
   const text = `Branch: ${branch}\nVorgemerkt: ${staged}\nNicht vorgemerkt: ${unstaged}\nUnversioniert: ${untracked}\nKonflikte: ${conflicts}`;

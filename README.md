@@ -1,16 +1,27 @@
 # PC-Bridge
 
 PC-Bridge verbindet einen ChatGPT-Work-Chat im Browser mit einem lokalen
-Windows-PC. Der Prototyp bietet zwei lesende MCP-Werkzeuge.
+Windows-PC. Der Prototyp bietet drei lesende MCP-Werkzeuge.
 
 - `pc_ping` sendet einen frischen Prüfwert an den Windows-Client und meldet dessen Antwort.
 - `epoch_git_status` zeigt den Branch und die Änderungszahlen eines lokal ausgewählten
   Git-Checkouts, beispielsweise von EPOCH.
+- `unity_active_scene` liest die aktuell im lokalen Unity-Editor geöffnete
+  Szene und zeigt ihren Speicherstatus. [Unity einrichten](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#unity-anbinden)
 
 Die private ChatGPT Site hostet den Web-MCP-Endpunkt und die Auftragswarteschlange
 in D1. Der Windows-Client holt Aufträge per HTTPS ab und ruft einen zweiten,
 lokalen MCP-Server über Standard-Ein- und Ausgabe auf. Der lokale Server führt
 die Werkzeuge aus.
+
+## Unity-Projektdaten
+
+Das Unity-Projekt liegt einmal lokal auf dem Windows-PC. Für Live-Abfragen
+arbeitet ChatGPT über PC-Bridge mit dem laufenden Editor und erhält die
+Antwort des jeweiligen Unity-MCP-Tools. So lassen sich auch ungespeicherte
+Änderungen erkennen. GitHub kann parallel den gespeicherten Stand
+versionieren, einschließlich `Assets/` mit `.meta`-Dateien, `Packages/`
+und `ProjectSettings/`. Unity erzeugt lokale Arbeitsordner wie `Library/`.
 
 ## Pakete
 

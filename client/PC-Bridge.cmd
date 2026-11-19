@@ -7,5 +7,5 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-node "%~dp0pc-bridge.mjs"
+node "%~dp0pc-bridge.mjs" %*
 if errorlevel 1 pause

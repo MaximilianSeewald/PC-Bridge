@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -9,6 +11,7 @@ import { test } from 'node:test';
 import worker from '../worker/index.js';
 import { startLocalMcp } from '../client/mcp-client.mjs';
 import { deviceClient, parsePairingCode, runJob } from '../client/pc-bridge.mjs';
+import { readUnityActiveScene } from '../client/unity-mcp.mjs';
 
 const origin = 'https://bridge-test.chatgpt.site';
 const owner = 'owner@example.com';
@@ -72,11 +75,12 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   const discovery = await mcp('server/discover', {}, {});
   assert.deepEqual(discovery.result.supportedVersions, ['2026-07-28']);
   const list = await mcp('tools/list', {}, {});
-  assert.deepEqual(list.result.tools.map((tool) => tool.name), ['pc_ping', 'epoch_git_status']);
+  assert.deepEqual(list.result.tools.map((tool) => tool.name), ['pc_ping', 'epoch_git_status', 'unity_active_scene']);
   assert.ok(list.result.tools.every((tool) => tool.annotations.readOnlyHint));
   assert.equal((await mcp('tools/call', { name: 'pc_ping' }, {})).result.isError, true);
   assert.equal((await mcp('tools/call', { name: 'run_shell' })).error.code, -32602);
   assert.equal((await mcp('tools/call', { name: 'epoch_git_status', arguments: { path: 'C:\\Other' } })).error.code, -32602);
+  assert.equal((await mcp('tools/call', { name: 'unity_active_scene', arguments: { action: 'save' } })).error.code, -32602);
   assert.equal((await call('/pair', { method: 'POST', headers: { Origin: origin } })).status, 403);
   assert.equal((await call('/pair', { method: 'POST', headers: { ...ownerHeader, Origin: 'https://unrelated.example' } })).status, 403);
   assert.equal((await call('/pair', { method: 'POST', headers: { ...browserForm, 'Sec-Fetch-Site': 'cross-site' } })).status, 403);
@@ -153,6 +157,87 @@ test('paired client claims once and returns a fresh ping and real Git status', a
   local.close();
   assert.deepEqual(await runJob({ ...ping.job, expires_at: Date.now() + 1000 }, local.callTool),
     { ok: false, error: 'mcp_unavailable' });
+});
+
+test('the paired client reads an unsaved Unity change over the local MCP HTTP connection', async (t) => {
+  const { mcp, pair } = prepareBridge(t);
+  const device = await pair();
+  await device('/api/device/poll', {});
+
+  const observed = [];
+  let dirty = false;
+  let sceneResponse = 'application/json';
+  const unityServer = createServer(async (req, res) => {
+    const chunks = [];
+    for await (const part of req) chunks.push(part);
+    const message = chunks.length ? JSON.parse(Buffer.concat(chunks)) : {};
+    observed.push({
+      method: message.method ?? req.method, params: message.params,
+      session: req.headers['mcp-session-id'], version: req.headers['mcp-protocol-version'],
+    });
+    if (req.method === 'DELETE' || message.method === 'notifications/initialized') {
+      res.writeHead(202, { Connection: 'close' });
+      res.end();
+      return;
+    }
+    const initialized = message.method === 'initialize';
+    const result = initialized ? { protocolVersion: '2025-06-18', capabilities: { tools: {} } } : {
+      structuredContent: {
+        success: true,
+        data: { name: 'Übung', path: 'Assets/Übung.unity', isLoaded: true, isDirty: dirty, rootCount: dirty ? 2 : 1 },
+      },
+    };
+    const response = JSON.stringify({ jsonrpc: '2.0', id: message.id, result });
+    const type = initialized ? 'application/json' : sceneResponse;
+    res.writeHead(200, {
+      'content-type': type, 'mcp-session-id': 'fixture-session', Connection: 'close',
+    });
+    if (type === 'text/event-stream') {
+      res.write(': keep-alive\r\n\r\n');
+      res.end(`event: message\r\ndata: ${response}\r\n\r\n`);
+    } else {
+      res.end(response);
+    }
+  });
+  unityServer.listen(0, '127.0.0.1');
+  await once(unityServer, 'listening');
+  t.after(() => new Promise(resolve => unityServer.close(resolve)));
+  const readUnity = () => readUnityActiveScene((url, options) => {
+    assert.equal(url, 'http://127.0.0.1:8080/mcp');
+    return fetch(`http://127.0.0.1:${unityServer.address().port}/mcp`, options);
+  });
+
+  async function callThroughBridge(unity) {
+    const pending = mcp('tools/call', { name: 'unity_active_scene' });
+    let job;
+    for (let attempt = 0; attempt < 30 && !job; attempt += 1) {
+      job = (await device('/api/device/poll', {})).job;
+      if (!job) await delay(15);
+    }
+    assert.ok(job);
+    const result = await runJob(job, () => assert.fail('Unity must use its own MCP connection'), unity);
+    await device('/api/device/result', { id: job.id, result });
+    return (await pending).result;
+  }
+
+  assert.match((await callThroughBridge(null)).content[0].text, /--unity/);
+  assert.match((await callThroughBridge(readUnity)).content[0].text,
+    /Unity-Szene: Übung\nPfad: Assets\/Übung\.unity\nObjekte auf oberster Ebene: 1\nUngespeicherte Änderungen: Nein/);
+  dirty = true;
+  sceneResponse = 'text/event-stream';
+  assert.match((await callThroughBridge(readUnity)).content[0].text,
+    /Objekte auf oberster Ebene: 2\nUngespeicherte Änderungen: Ja/);
+
+  const callSteps = [
+    { method: 'notifications/initialized', session: 'fixture-session', version: '2025-06-18' },
+    { method: 'tools/call', params: { name: 'manage_scene', arguments: { action: 'get_active' } },
+      session: 'fixture-session', version: '2025-06-18' },
+    { method: 'DELETE', session: 'fixture-session', version: '2025-06-18' },
+  ];
+  assert.deepEqual(observed.filter(entry => entry.method !== 'initialize').map(entry => {
+    if (entry.params === undefined) delete entry.params;
+    return entry;
+  }), [...callSteps, ...callSteps]);
 });
 
 test('expired work stays closed and a new pairing revokes the old device', async (t) => {
