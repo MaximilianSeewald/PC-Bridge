@@ -1,15 +1,12 @@
-"""Build the three distributable PC-Bridge packages from the repository."""
+"""Build the Windows and ChatGPT Sites release archives."""
 
 import argparse
+import json
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 ROOT = Path(__file__).resolve().parent
 PACKAGES = {
-    "PC-Bridge-ChatGPT-Plugin-Baukasten.zip": {
-        "plugin/README.md": "README.md",
-        "plugin/build_archive.py": "build_archive.py",
-    },
     "PC-Bridge-Sites-Relay.zip": {
         "README.md": "README.md",
         ".openai/hosting.json": ".openai/hosting.json",
@@ -33,7 +30,11 @@ def build_packages(output):
         with ZipFile(archive_path, "w") as archive:
             for source, target in sorted(files.items()):
                 content = (ROOT / source).read_bytes()
-                if target.endswith(".cmd"):
+                if source == ".openai/hosting.json":
+                    manifest = json.loads(content)
+                    manifest.pop("project_id", None)
+                    content = (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
+                elif target.endswith(".cmd"):
                     content = content.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
                 archive.writestr(ZipInfo(target), content, compress_type=ZIP_DEFLATED)
         print(archive_path)

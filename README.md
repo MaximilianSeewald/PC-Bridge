@@ -14,13 +14,16 @@ die Werkzeuge aus.
 
 ## Pakete
 
-Die drei Archive stehen unter [GitHub Releases](https://github.com/MaximilianSeewald/PC-Bridge/releases).
+Jeder Push auf `main` startet Tests und baut zwei ZIP-Dateien. Sind die
+Prüfungen erfolgreich, veröffentlicht der Workflow beide zusammen als
+[GitHub Release](https://github.com/MaximilianSeewald/PC-Bridge/releases).
+Der Tag `main-<Laufnummer>-<Commit>` zeigt, aus welchem Stand die Pakete
+gebaut wurden. Die Veröffentlichung einer Site erfolgt in ChatGPT Sites.
 
 | Paket | Verwendung |
 | --- | --- |
-| `PC-Bridge-ChatGPT-Plugin-Baukasten.zip` | Erstellt das installierbare ZIP für die App-ID deiner eigenen Site. [Anleitung](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/plugin). |
-| `PC-Bridge-Sites-Relay.zip` | Enthält den Worker, den Build und die D1-Migration für eine eigene private Site. |
-| `PC-Bridge-Windows-MCP.zip` | Enthält das Startskript, den Windows-Client und den lokalen MCP-Server. [Anleitung](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client). |
+| `PC-Bridge-Sites-Relay.zip` | Site-Projekt mit Worker, Hosting-Konfiguration und D1-Migration für die Einrichtung oder Aktualisierung einer privaten Site. |
+| `PC-Bridge-Windows-MCP.zip` | Startskript, Windows-Client und lokaler MCP-Server. Entpacken und `PC-Bridge.cmd` starten. [Anleitung](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client). |
 
 ## Eigene private Site einrichten
 
@@ -62,14 +65,29 @@ Auf Windows brauchst du Node.js 22 oder neuer. Git wird für die Statusabfrage b
 4. Installiere und verbinde das erzeugte Plugin bei Bedarf unter **Plugins →
    Persönlich → Von dir erstellt**. Folge dann der
    [Anleitung für den Windows-Client](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client).
-   Für den Import per ZIP verwende den Plugin-Baukasten mit der App-ID
-   dieses Site-Plugins.
 
 Der Kopplungscode enthält die Adresse der Site und die Zugangsdaten für
 den PC. Kopiere ihn direkt von deiner privaten Site in den Client. Über
 **Kopplung aufheben** trennst du den bisherigen Client. Der Client
 überträgt den Prüfwert oder Branch und Änderungszahlen. Git-Dateinamen,
 Dateiinhalte und der Pfad zum Checkout bleiben lokal.
+
+## Bestehende private Site aktualisieren
+
+1. Lade `PC-Bridge-Sites-Relay.zip` aus dem gewünschten GitHub Release
+   herunter und entpacke es separat. Öffne das Quellprojekt deiner bestehenden
+   Site in ChatGPT Work oder Codex.
+2. Übernimm `worker/`, `drizzle/`, `build.mjs` und `package.json` aus
+   dem Release in das bestehende Quellprojekt. Verwende die vorhandene
+   `.openai/hosting.json` als Grundlage. Ihre `project_id` und die
+   D1-Bindung identifizieren die Site und ihre Datenbank. Die Vorlage im ZIP
+   enthält die benötigten Hosting-Einstellungen für eine neue Site.
+3. Bitte ChatGPT Work oder Codex, die bestehende Site mit `npm run build`
+   zu bauen und als neue private Version zu veröffentlichen. Verwende
+   dabei die vorhandenen Site-Secrets und wende bei Bedarf die mitgelieferten
+   Datenbankmigrationen an.
+4. Starte den Windows-Client aus demselben Release und prüfe im bestehenden
+   `@PC-Bridge`-Plugin mit `pc_ping`, ob der gekoppelte PC antwortet.
 
 ## Lokal testen
 
@@ -84,4 +102,5 @@ Die Tests verwenden SQLite im Arbeitsspeicher und einen temporären
 Git-Checkout. Die Live-Kopplung mit dem eigenen ChatGPT-Konto und
 Windows-PC prüfst du mit den Schritten im Client-Handbuch.
 
-Die drei Release-Archive lassen sich mit `python3 package-release.py` erstellen.
+Die beiden Release-Archive lassen sich im Repository mit
+`python3 package-release.py` unter `dist/packages/` erstellen.

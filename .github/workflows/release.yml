@@ -1,0 +1,55 @@
+name: PC-Bridge Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Test and build packages
+        run: |
+          npm test
+          npm run build
+          python3 package-release.py
+          python3 -m zipfile -t dist/packages/PC-Bridge-Sites-Relay.zip
+          python3 -m zipfile -t dist/packages/PC-Bridge-Windows-MCP.zip
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="main-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+          release="$(gh release view "$tag" --json isDraft,assets 2>/dev/null || true)"
+
+          if [[ -z "$release" ]]; then
+            gh release create "$tag" --target "$GITHUB_SHA" --draft --generate-notes \
+              --title "PC-Bridge $tag"
+          elif [[ "$(jq -r .isDraft <<< "$release")" == false ]]; then
+            jq -e '[.assets[].name] | sort == [
+              "PC-Bridge-Sites-Relay.zip", "PC-Bridge-Windows-MCP.zip"
+            ]' <<< "$release" > /dev/null
+            exit 0
+          fi
+
+          gh release upload "$tag" --clobber \
+            dist/packages/PC-Bridge-Sites-Relay.zip \
+            dist/packages/PC-Bridge-Windows-MCP.zip
+
+          main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
+          latest=false
+          if [[ "$GITHUB_SHA" == "$main_sha" ]]; then
+            latest=true
+          fi
+          gh release edit "$tag" --draft=false --latest="$latest"
