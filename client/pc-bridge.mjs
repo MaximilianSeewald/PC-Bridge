@@ -1,13 +1,10 @@
-import { execFile } from 'node:child_process';
+import { startLocalMcp } from './mcp-client.mjs';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
-import { promisify } from 'node:util';
-
-const executeFile = promisify(execFile);
 const validToken = /^[a-f0-9]{64}$/;
 
 function chatGptSiteOrigin(value) {
@@ -39,79 +36,16 @@ export function parsePairingCode(input) {
   return { ...data, siteOrigin: chatGptSiteOrigin(data.siteOrigin) };
 }
 
-export function parseGitStatus(output) {
-  const records = output.split('\0');
-  const counts = { staged: 0, unstaged: 0, untracked: 0, conflicts: 0 };
-  let branch;
-  for (let index = 0; index < records.length; index += 1) {
-    const record = records[index];
-    if (!record) continue;
-    if (record.startsWith('# branch.head ')) {
-      branch = record.slice('# branch.head '.length);
-      continue;
-    }
-    switch (record[0]) {
-      case '?':
-        counts.untracked += 1;
-        break;
-      case 'u':
-        counts.conflicts += 1;
-        break;
-      case '1':
-      case '2': {
-        const [staged, unstaged] = record.slice(2, 4);
-        if (staged !== '.') counts.staged += 1;
-        if (unstaged !== '.') counts.unstaged += 1;
-        if (record[0] === '2') index += 1; // Rename records include the old path after a NUL.
-        break;
-      }
-      default:
-        break;
-    }
-  }
-  if (!branch) throw new Error('Git returned no branch status');
-  return { branch, ...counts };
-}
-
-async function gitStatus(repo) {
-  if (!repo || !isAbsolute(repo)) return { ok: false, error: 'repo_invalid' };
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')),
-  );
-  const options = { env, timeout: 3_500, maxBuffer: 2 * 1024 * 1024, windowsHide: true };
-  const git = ['--no-pager', '--no-optional-locks', '-c', 'core.fsmonitor=false', '-C', repo];
-
-  let prefix;
-  try {
-    prefix = (await executeFile('git', [...git, 'rev-parse', '--show-prefix'], options)).stdout;
-  } catch (error) {
-    return { ok: false, error: error.code === 128 ? 'repo_invalid' : 'git_failed' };
-  }
-  if (prefix.trim()) return { ok: false, error: 'repo_invalid' };
-
-  try {
-    const { stdout } = await executeFile(
-      'git', [...git, 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=normal'], options,
-    );
-    return { ok: true, ...parseGitStatus(stdout) };
-  } catch {
-    return { ok: false, error: 'git_failed' };
-  }
-}
-
-export async function runJob(job, repo) {
+export async function runJob(job, callTool) {
   if (!job || !Number.isFinite(job.expires_at)) return { ok: false, error: 'invalid_job' };
   if (Date.now() >= job.expires_at) return { ok: false, error: 'expired' };
-  switch (job.tool) {
-    case 'pc_ping':
-      if (typeof job.challenge !== 'string' || !/^[a-f0-9]{16}$/.test(job.challenge)) {
-        return { ok: false, error: 'invalid_job' };
-      }
-      return { ok: true, challenge: job.challenge };
-    case 'epoch_git_status':
-      return gitStatus(repo);
-    default:
-      return { ok: false, error: 'invalid_job' };
+
+  const args = { pc_ping: { challenge: job.challenge }, epoch_git_status: {} };
+  if (!Object.hasOwn(args, job.tool)) return { ok: false, error: 'invalid_job' };
+  try {
+    return await callTool(job.tool, args[job.tool]);
+  } catch {
+    return { ok: false, error: 'mcp_unavailable' };
   }
 }
 
@@ -151,12 +85,21 @@ async function runClient(ask) {
     const path = input.trim().replace(/^"(.*)"$/, '$1');
     if (!isAbsolute(path)) throw new Error('Bitte gib den vollständigen Pfad zum EPOCH-Ordner an.');
     repo = await realpath(path).catch(() => { throw new Error('Der EPOCH-Ordner wurde nicht gefunden.'); });
-    const status = await gitStatus(repo);
-    if (!status.ok) throw new Error('Git oder der Hauptordner der EPOCH-Kopie wurde nicht erkannt.');
   }
 
-  const call = deviceClient(credentials.siteOrigin, credentials);
-  console.log('Client läuft. Strg+C beendet die Verbindung.');
+  const mcp = await startLocalMcp(repo);
+  try {
+    if (repo && !(await mcp.callTool('epoch_git_status', {})).ok) {
+      throw new Error('Git oder der Hauptordner der EPOCH-Kopie wurde nicht erkannt.');
+    }
+    console.log('Lokaler MCP-Server gestartet. Strg+C beendet die Verbindung.');
+    await pollSite(deviceClient(credentials.siteOrigin, credentials), mcp);
+  } finally {
+    mcp.close();
+  }
+}
+
+async function pollSite(call, mcp) {
   let online = false;
   while (true) {
     try {
@@ -164,7 +107,7 @@ async function runClient(ask) {
       if (!online) console.log('Verbunden. Rufe jetzt @PC-Bridge in ChatGPT Work auf.');
       online = true;
       if (job) {
-        const result = await runJob(job, repo);
+        const result = await runJob(job, mcp.callTool);
         try {
           await call('/api/device/result', { id: job.id, result });
           console.log(result.ok ? `Auftrag erledigt: ${job.tool}` : `Auftrag abgewiesen: ${job.tool}`);
@@ -181,6 +124,7 @@ async function runClient(ask) {
       online = false;
       await delay(3_500);
     }
+    if (!mcp.isRunning()) throw new Error('Der lokale MCP-Server wurde beendet. Starte PC-Bridge.cmd erneut.');
     await delay(2_000);
   }
 }
