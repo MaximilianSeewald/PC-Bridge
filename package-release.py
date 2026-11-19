@@ -26,9 +26,30 @@ PACKAGES = {
 }
 
 
-def build_packages(output):
+WEB_PACKAGES = {
+    "PC-Bridge-Web-Plugin-Builder.zip": {
+        "plugin/build_web_archive.py": "build_web_archive.py",
+        "plugin/README-web.md": "README.md",
+    },
+    "PC-Bridge-Web-Relay.zip": {
+        **{f"relay/{name}": f"relay/{name}" for name in (
+            "server.mjs", "oauth.mjs", "Dockerfile", "devices.example.json"
+        )},
+        "relay/README.md": "README.md",
+    },
+    "PC-Bridge-Web-Windows.zip": {
+        **{f"client/{name}": name for name in (
+            "PC-Bridge-Portable.cmd", "portable-device.mjs", "mcp-client.mjs",
+            "mcp-server.mjs", "pc-bridge.example.json"
+        )},
+        "client/README-portable.md": "README.md",
+    },
+}
+
+
+def build_packages(output, packages=PACKAGES):
     output.mkdir(parents=True, exist_ok=True)
-    for name, files in PACKAGES.items():
+    for name, files in packages.items():
         archive_path = output / name
         with ZipFile(archive_path, "w") as archive:
             for source, target in sorted(files.items()):
@@ -42,4 +63,6 @@ def build_packages(output):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "dist" / "packages")
-    build_packages(parser.parse_args().output)
+    parser.add_argument("--web", action="store_true", help="Build the independently hosted Web packages.")
+    args = parser.parse_args()
+    build_packages(args.output, WEB_PACKAGES if args.web else PACKAGES)

@@ -1,0 +1,10 @@
+{
+  "relay": "https://pc-bridge.example.org",
+  "servers": {
+    "epoch": {
+      "command": "node",
+      "args": ["./mcp-server.mjs", "C:\\Projects\\Epoch"],
+      "tools": ["pc_ping", "epoch_git_status"]
+    }
+  }
+}

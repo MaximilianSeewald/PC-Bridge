@@ -3,10 +3,12 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
 const version = '2025-11-25';
+const supportedVersions = new Set([version, '2025-06-18', '2025-03-26', '2024-11-05']);
 const server = fileURLToPath(new URL('./mcp-server.mjs', import.meta.url));
 
-export async function startLocalMcp(repo) {
-  const child = spawn(process.execPath, [server, ...(repo ? [repo] : [])], {
+export async function startStdioMcp(command, args = [], { cwd, env, timeout = 8_000 } = {}) {
+  const child = spawn(command, args, {
+    cwd, env,
     stdio: ['pipe', 'pipe', 'inherit'],
     windowsHide: true,
   });
@@ -34,6 +36,7 @@ export async function startLocalMcp(repo) {
       close(new Error('Ungültiges MCP-Protokoll vom lokalen Server.'));
       return;
     }
+    if (message?.method) return;
     const finish = pending.get(message?.id);
     if (!finish) return;
     if (message.jsonrpc !== '2.0' || message.error) {
@@ -49,7 +52,7 @@ export async function startLocalMcp(repo) {
     if (closed) return Promise.reject(new Error('Lokaler MCP-Server ist offline.'));
     const id = nextId++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => close(new Error('Der lokale MCP-Server antwortet nicht.')), 8_000);
+      const timer = setTimeout(() => close(new Error('Der lokale MCP-Server antwortet nicht.')), timeout);
       pending.set(id, (error, result) => {
         clearTimeout(timer);
         pending.delete(id);
@@ -64,7 +67,7 @@ export async function startLocalMcp(repo) {
     const initialized = await request('initialize', {
       protocolVersion: version, capabilities: {}, clientInfo: { name: 'pc-bridge', version: '0.2.0' },
     });
-    if (initialized?.protocolVersion !== version || !initialized.capabilities?.tools) {
+    if (!supportedVersions.has(initialized?.protocolVersion) || !initialized.capabilities?.tools) {
       throw new Error('Der lokale Prozess unterstützt die erwartete MCP-Version nicht.');
     }
     write({ method: 'notifications/initialized' });
@@ -77,8 +80,15 @@ export async function startLocalMcp(repo) {
     request,
     close,
     isRunning: () => !closed,
+  };
+}
+
+export async function startLocalMcp(repo) {
+  const client = await startStdioMcp(process.execPath, [server, ...(repo ? [repo] : [])]);
+  return {
+    ...client,
     async callTool(name, args) {
-      const result = await request('tools/call', { name, arguments: args });
+      const result = await client.request('tools/call', { name, arguments: args });
       if (typeof result?.structuredContent?.ok !== 'boolean') {
         throw new Error('Der lokale MCP-Server meldet kein lesbares Ergebnis.');
       }

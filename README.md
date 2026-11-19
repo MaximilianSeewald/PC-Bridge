@@ -1,18 +1,33 @@
 # PC-Bridge
 
-PC-Bridge verbindet einen ChatGPT-Work-Chat im Browser mit einem lokalen
-Windows-PC. Der Prototyp bietet zwei lesende MCP-Werkzeuge.
+PC-Bridge verbindet einen ChatGPT-Work-Chat im Browser mit freigegebenen
+MCP-Werkzeugen auf einem lokalen Windows-PC.
 
-- `pc_ping` sendet einen frischen Prüfwert an den Windows-Client und meldet dessen Antwort.
-- `epoch_git_status` zeigt den Branch und die Änderungszahlen eines lokal ausgewählten
-  Git-Checkouts, beispielsweise von EPOCH.
+## Eigenständig gehostete GitHub-Version
 
-Die private ChatGPT Site hostet den Web-MCP-Endpunkt und die Auftragswarteschlange
-in D1. Der Windows-Client holt Aufträge per HTTPS ab und ruft einen zweiten,
-lokalen MCP-Server über Standard-Ein- und Ausgabe auf. Der lokale Server führt
-die Werkzeuge aus.
+Die Web-Version liefert Plugin, Relay und Windows-Client als getrennte
+Pakete aus dem Repository. Der Plugin-Build enthält eine echte
+`mcp.json` mit der HTTPS-Adresse des eigenen Relays und OAuth-Konfiguration.
+Für diese Variante ist keine ChatGPT Site erforderlich.
 
-## Pakete
+```sh
+npm test
+python3 package-release.py --web
+```
+
+- [Relay betreiben](relay/README.md)
+- [Windows-Client und lokale MCP-Server einrichten](client/README-portable.md)
+- [Web-Plugin bauen und einreichen](plugin/README-web.md)
+
+Die lokale Strecke vom Relay bis zu einem echten MCP-Prozess ist getestet.
+Für ChatGPT Web muss der konkrete HTTPS-Server mit OAuth verbunden und vom
+Zielkonto unterstützt werden. Für eine allgemein installierbare Web-Version
+reicht der Projektbetreiber das ZIP im OpenAI-Entwicklerportal ein.
+
+## Sites-Prototyp v0.2.0
+
+Der ursprüngliche Prototyp verwendet eine private Site und stellt über
+einen lokalen MCP-Prozess die Werkzeuge `pc_ping` und `epoch_git_status` bereit.
 
 Die drei Archive stehen unter [GitHub Releases](https://github.com/MaximilianSeewald/PC-Bridge/releases).
 
@@ -62,8 +77,7 @@ Auf Windows brauchst du Node.js 22 oder neuer. Git wird für die Statusabfrage b
 4. Installiere und verbinde das erzeugte Plugin bei Bedarf unter **Plugins →
    Persönlich → Von dir erstellt**. Folge dann der
    [Anleitung für den Windows-Client](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client).
-   Für den Import per ZIP verwende den Plugin-Baukasten mit der App-ID
-   dieses Site-Plugins.
+   Der ZIP-Baukasten dieses Prototyps erbt die Kontoberechtigungen der Sites-App.
 
 Der Kopplungscode enthält die Adresse der Site und die Zugangsdaten für
 den PC. Kopiere ihn direkt von deiner privaten Site in den Client. Über
