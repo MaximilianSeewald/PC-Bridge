@@ -1,28 +1,35 @@
-# PC-Bridge unter Windows testen
+# PC-Bridge unter Windows
 
-Voraussetzungen sind Node.js 22 oder neuer sowie Git für den EPOCH-Test. Der
-Verbindungstest funktioniert auch ohne Git. Der Client bleibt als normaler Prozess
-im Konsolenfenster geöffnet.
+Voraussetzungen sind Node.js 22 oder neuer sowie Git für die Statusabfrage.
+Der Verbindungstest funktioniert auch ohne Git.
 
-1. Öffne deine eigene private PC-Bridge-Site. Falls du sie noch nicht eingerichtet
-   hast, folge der [Anleitung im Hauptordner](../README.md).
-2. Wähle **Kopplungscode anzeigen** und kopiere den vollständigen Code aus dem
-   Textfeld. Ein neuer Code ersetzt die bisherige Kopplung.
-3. Starte **PC-Bridge.cmd** per Doppelklick. Füge den Code ein und drücke Enter.
-   Die Konsole zeigt den Code beim Einfügen nicht an. Gib anschließend den
-   vollständigen Pfad zur lokalen EPOCH-Kopie ein. Für einen reinen
-   Verbindungstest kannst du die Pfadangabe überspringen.
-4. Öffne in ChatGPT im Web einen neuen **Work**-Chat. Installiere und verbinde
-   **PC-Bridge** bei Bedarf unter **Plugins → Persönlich → Von dir erstellt**.
-5. Schreibe zuerst „@PC-Bridge Prüfe die Verbindung zu meinem PC.“ Der Chat
-   sollte den Prüfwert anzeigen. Frage anschließend „@PC-Bridge Lies den
-   lokalen EPOCH-Git-Status.“ Der Chat erhält Branch und Änderungszahlen.
+1. Entpacke **PC-Bridge-Windows-MCP.zip** und öffne deine private
+   PC-Bridge-Site. Die Einrichtung steht in der
+   [Projekt-README](https://github.com/MaximilianSeewald/PC-Bridge#eigene-private-site-einrichten).
+2. Wähle **Kopplungscode anzeigen** und kopiere den vollständigen Code.
+   Ein neuer Code ersetzt die bisherige Kopplung.
+3. Starte **PC-Bridge.cmd** und füge den Code ein. Die Konsole zeigt den Code
+   beim Einfügen nicht an. Gib den vollständigen Pfad zum Git-Checkout ein,
+   beispielsweise deiner EPOCH-Kopie. Für einen reinen Verbindungstest lässt
+   du den Pfad leer.
+4. Warte auf **Lokaler MCP-Server gestartet** und **Verbunden**.
+   Das Konsolenfenster hält beide Prozesse offen.
+5. Wähle im Work-Chat **PC-Bridge MCP** für das importierte Plugin-ZIP
+   oder **PC-Bridge** für das Plugin deiner Site. Bitte um einen
+   Verbindungstest und dann um den lokalen EPOCH-Git-Status.
 
-Zum Beenden drückst du Strg+C oder schließt das Fenster. Nach rund zwölf Sekunden
-ohne Lebenszeichen gilt der Client als offline. Wenn der Client gerade erst
-geschlossen wurde, kann ein Aufruf zunächst die Zeitüberschreitung melden.
-Mit **Kopplung aufheben** kannst du den bisherigen Gerätezugang widerrufen.
+Strg+C beendet den Client. Nach rund zwölf Sekunden ohne Lebenszeichen
+meldet die Site den PC als offline. **Kopplung aufheben** widerruft den
+bisherigen Gerätezugang. Behandle den Kopplungscode wie ein Passwort.
 
-Der Git-Aufruf liest die lokal festgelegte Arbeitskopie. ChatGPT erhält keine
-Dateinamen, Dateiinhalte oder lokalen Pfade. Der Kopplungscode wird während
-des Laufs im Arbeitsspeicher gehalten. Behandle ihn wie ein Passwort.
+## Lokaler MCP-Endpunkt
+
+Der Client startet `mcp-server.mjs` als separaten Node-Prozess und ruft die
+Werkzeuge über MCP und Standard-Ein- und Ausgabe auf. Der Server kann auch
+von einem lokalen MCP-Client per `stdio` gestartet werden. Trage dort
+`node` als Kommando und den absoluten Pfad zu `mcp-server.mjs` als Argument
+ein. Der optionale zweite Parameter ist der absolute Pfad zum Git-Checkout.
+
+`pc_ping` bestätigt einen Prüfwert aus 16 Kleinbuchstaben a–f oder Ziffern.
+`epoch_git_status` liefert Branch und Änderungszahlen. Git-Dateinamen,
+Dateiinhalte und der lokale Checkout-Pfad bleiben auf dem PC.
