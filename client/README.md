@@ -101,6 +101,35 @@ Der Client startet den lokalen MCP-Prozess per `uvx` beim jeweiligen
 Blender-Aufruf. Der erste Aufruf kann das Paket und seine Abhängigkeiten
 herunterladen. Öffne für die Bildabfrage einen 3D-Viewport in Blender.
 
+### Blender-Modelle in Unity verwenden
+
+- `blender_execute_code` verwendet Blender-Python für Modellierung, UVs,
+  Materialien, Rigging und Animation. PC-Bridge aktiviert den Safe Mode
+  von MCP for Blender. Der prüft Python-Skripte und erlaubt weiterhin
+  Blender-Dateioperationen wie Speichern oder Exportieren.
+- `blender_fbx_to_unity` exportiert ausgewählte Objekte oder die explizit
+  angegebenen Namen aus dem aktiven View Layer. Gib einen freien
+  `assetName` ohne Endung an. Blender muss im Objektmodus sein und Unity
+  MCP das Zielprojekt außerhalb des Play Mode geöffnet haben.
+- Der Import landet in `Assets/Art/BlenderImports/<assetName>.fbx`.
+  PC-Bridge meldet die Unity-GUID und ersetzt keine vorhandenen Assets.
+  Meshes, Empties und Armatures können gemeinsam exportiert werden. Gib
+  für ein Rig das Mesh und die zugehörige Armature an. Mit
+  `animations: true` werden Animationen gebacken. Texturdateien und
+  Blender-Shader werden separat in Unity eingerichtet.
+- Falls Unity nach dem Schreiben des FBX den Import noch nicht bestätigt,
+  meldet PC-Bridge den vorhandenen Pfad. Importiere dann diesen Pfad mit
+  `manage_asset` und `action: import`.
+
+Ein gemeinsamer Abnahmeprompt für eine Blender-Testszene und ein
+geöffnetes Unity-Testprojekt:
+
+> Erstelle in Blender ein Mesh namens `PCBridge_FBX_Test`. Lies die
+> Szene und rufe ein Viewport-Bild ab. Übertrage nur dieses Mesh mit
+> `blender_fbx_to_unity` unter einem freien Assetnamen und prüfe mit
+> `manage_asset`, dass das FBX im Unity-Projekt angekommen ist. Zeige
+> mir das PNG und nenne Unity-Pfad und GUID.
+
 ## Testmodus für Unity-Multiplayer unter Windows
 
 Starte `PC-Bridge-Testmodus.cmd` per Doppelklick, wenn Windows bei

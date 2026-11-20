@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 const blenderTools = new Map([
   ['blender_scene_info', { name: 'get_scene_info', arguments: {} }],
   ['blender_viewport', { name: 'look', arguments: { mode: 'viewport', shading: 'solid', max_size: 480 } }],
+  ['blender_execute_code', { name: 'execute_blender_code' }],
 ]);
 export const blenderToolNames = new Set(blenderTools.keys());
 
@@ -24,6 +25,7 @@ async function callStdio(params, signal, spawnProcess) {
       BLENDER_PORT: '9876',
       BLENDER_MCP_APPS: '0',
       BLENDER_MCP_DISABLE_TELEMETRY: '1',
+      BLENDER_MCP_SAFE_MODE: '1',
     },
   });
   let active;
@@ -88,7 +90,7 @@ async function callStdio(params, signal, spawnProcess) {
     const initialized = await request('initialize', {
       protocolVersion: '2025-11-25',
       capabilities: {},
-      clientInfo: { name: 'pc-bridge', version: '0.8.0' },
+      clientInfo: { name: 'pc-bridge', version: '0.9.0' },
     });
     if (typeof initialized?.protocolVersion !== 'string' || !initialized.capabilities?.tools) {
       throw new Error('Blender MCP hat keine Werkzeuge gemeldet.');
@@ -107,9 +109,17 @@ async function callStdio(params, signal, spawnProcess) {
 }
 
 export function createBlenderMcp(spawnProcess = spawn) {
-  return async (tool, signal) => {
-    const params = blenderTools.get(tool);
+  return async (tool, args, signal) => {
+    let params = blenderTools.get(tool);
     if (!params) return failure('Unbekanntes Blender-Werkzeug.');
+    if (tool === 'blender_execute_code') {
+      if (Object.keys(args).length !== 1 || typeof args.code !== 'string' || !args.code.trim() || args.code.length > 16_000) {
+        return failure('Gib ausschließlich Blender-Python-Code mit maximal 16000 Zeichen an.');
+      }
+      params = { name: params.name, arguments: { code: args.code } };
+    } else if (Object.keys(args).length) {
+      return failure('Dieses Blender-Werkzeug erwartet keine Parameter.');
+    }
     try {
       const result = await callStdio(params, signal, spawnProcess);
       if (!Array.isArray(result?.content)) return failure('Blender MCP hat keine gültige Antwort geliefert.');
@@ -118,8 +128,9 @@ export function createBlenderMcp(spawnProcess = spawn) {
         .map(({ text }) => ({ type: 'text', text }));
       // get_scene_info returns connection failures as text in MCP for Blender 2.3.1.
       const sceneError = tool === 'blender_scene_info' && /^Error(?::| getting scene info:)/.test(content[0]?.text);
-      if (result.isError || sceneError) {
-        return failure(content.map(({ text }) => text).join('\n').slice(0, 1000) ||
+      const scriptError = tool === 'blender_execute_code' && !content[0]?.text.startsWith('Code executed successfully:');
+      if (result.isError || sceneError || scriptError) {
+        return failure(content.map(({ text }) => text).join('\n').slice(0, 4000) ||
           'Blender MCP meldet einen Fehler. Prüfe die Verbindung im Blender-Add-on.');
       }
 

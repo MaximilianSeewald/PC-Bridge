@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import worker from '../worker/index.js';
 import { deviceClient, parsePairingCode, runJob } from '../client/pc-bridge.mjs';
 import { createBlenderMcp } from '../client/blender-mcp.mjs';
+import { createBlenderFbxToUnity } from '../client/blender-fbx-to-unity.mjs';
 import { createUnityMcp } from '../client/unity-mcp.mjs';
 import { createUnityImageImporter } from '../client/unity-image-import.mjs';
 import catalog from '../client/unity-tools.json' with { type: 'json' };
@@ -84,9 +85,10 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   const actual = list.result.tools;
   assert.deepEqual(actual.map(tool => tool.name), [
     'pc_ping', 'unity_active_scene', 'unity_game_view', 'blender_scene_info', 'blender_viewport',
-    'unity_import_chat_image', ...catalog.tools.map(tool => tool.name), ...gitTools.map(tool => tool.name),
+    'unity_import_chat_image', 'blender_execute_code', 'blender_fbx_to_unity',
+    ...catalog.tools.map(tool => tool.name), ...gitTools.map(tool => tool.name),
   ]);
-  assert.deepEqual(actual.slice(6).map(tool => tool.inputSchema), [...catalog.tools, ...gitTools].map(tool => tool.inputSchema));
+  assert.deepEqual(actual.slice(8).map(tool => tool.inputSchema), [...catalog.tools, ...gitTools].map(tool => tool.inputSchema));
   const imageImport = actual.find(tool => tool.name === 'unity_import_chat_image');
   assert.deepEqual(imageImport._meta, { 'openai/fileParams': ['file'] });
   assert.deepEqual(imageImport.inputSchema.properties.file.required, ['download_url', 'file_id']);
@@ -148,7 +150,7 @@ test('the paired client claims jobs once and returns fresh ping values', async (
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM bridge_job').get().n, 0);
 });
 
-test('Blender scene text and viewport PNG pass through stdio and the paired relay', async (t) => {
+test('read and edit Blender through the paired relay and transfer a named model into Unity', async (t) => {
   const { mcp, pair } = prepareBridge(t);
   const device = await pair();
   await device('/api/device/poll', {});
@@ -156,9 +158,12 @@ test('Blender scene text and viewport PNG pass through stdio and the paired rela
     type: 'image', mimeType: 'image/png',
     data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jgZkAAAAASUVORK5CYII=',
   };
+  const fbx = '4b617964617261204642582042696e6172792020001a004642582066697874757265';
+  const editCode = 'import bpy\nbpy.context.active_object.name = "PCBridge_Test"';
   let blenderOnline = true;
   const script = `
     const assert = require('node:assert/strict');
+    const { writeFileSync } = require('node:fs');
     const { createInterface } = require('node:readline');
     const expectedParams = {
       get_scene_info: {},
@@ -180,6 +185,17 @@ test('Blender scene text and viewport PNG pass through stdio and the paired rela
       }
       assert.equal(message.method, 'tools/call');
       const { name, arguments: args } = message.params;
+      if (name === 'execute_blender_code') {
+        if (args.code === ${JSON.stringify(editCode)}) {
+          return reply({ content: [{ type: 'text', text: 'Code executed successfully: PCBridge_Test' }] });
+        }
+        const config = args.code.split('\\n').find(line => line.includes('req = json.loads(')).trim();
+        const { filepath, objectNames, animations } = JSON.parse(JSON.parse(config.slice('req = json.loads('.length, -1)));
+        assert.deepEqual(objectNames, ['PCBridge_Test']);
+        assert.equal(animations, false);
+        writeFileSync(filepath, Buffer.from('${fbx}', 'hex'));
+        return reply({ content: [{ type: 'text', text: 'Code executed successfully: PC_BRIDGE_FBX ' + JSON.stringify(objectNames) }] });
+      }
       assert.deepEqual(args, expectedParams[name]);
       reply({ content: name === 'look'
         ? [${JSON.stringify(png)}]
@@ -193,13 +209,44 @@ test('Blender scene text and viewport PNG pass through stdio and the paired rela
     assert.deepEqual(args, ['mcp-for-blender@2.3.1']);
     assert.equal(options.env.BLENDER_HOST, '127.0.0.1');
     assert.equal(options.env.BLENDER_MCP_APPS, '0');
+    assert.equal(options.env.BLENDER_MCP_SAFE_MODE, '1');
     return spawn(process.execPath, ['-e', script, blenderOnline ? 'online' : 'offline'], options);
   });
-  const unity = () => assert.fail('Blender must not require Unity');
-  const call = async (name) => (await roundTrip(mcp, device, name, {}, unity,
-    undefined, undefined, undefined, {}, blender)).reply;
+  const root = await mkdtemp(join(tmpdir(), 'pc-bridge-blender-unity-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const folder of ['Assets', 'Packages', 'ProjectSettings']) await mkdir(join(root, folder));
+  await writeFile(join(root, 'Packages', 'manifest.json'), '{}');
+  await writeFile(join(root, 'ProjectSettings', 'ProjectVersion.txt'), 'm_EditorVersion: 6000.0.0f1');
+  const guid = 'abcdef0123456789'.repeat(2);
+  const path = 'Assets/Art/BlenderImports/Bridge_Model.fbx';
+  let imports = 0;
+  const transfer = createBlenderFbxToUnity({
+    async readResource(uri) {
+      const data = uri === 'mcpforunity://project/info'
+        ? { projectRoot: root }
+        : { editor: { play_mode: { is_playing: false, is_changing: false } } };
+      return { success: true, data };
+    },
+    async callTool(name, args) {
+      assert.equal(name, 'manage_asset');
+      assert.deepEqual(args, { action: 'import', path });
+      assert.equal((await readFile(join(root, path))).toString('hex'), fbx);
+      imports += 1;
+      return { structuredContent: { success: true, data: { guid } }, content: [] };
+    },
+  }, root, blender);
+  const dispatch = (name, args, signal) => name === 'blender_fbx_to_unity' ? transfer(args, signal) : blender(name, args, signal);
+  const unity = () => assert.fail('Blender tools must use their own route');
+  const call = async (name, args = {}) => (await roundTrip(mcp, device, name, args, unity,
+    undefined, undefined, undefined, args, dispatch)).reply;
   assert.deepEqual((await call('blender_scene_info')).content, [{ type: 'text', text: 'MESH Würfel' }]);
   assert.deepEqual((await call('blender_viewport')).content, [png]);
+  assert.match((await call('blender_execute_code', { code: editCode })).content[0].text, /PCBridge_Test/);
+  const args = { assetName: 'Bridge_Model', objectNames: ['PCBridge_Test'] };
+  assert.deepEqual((await call('blender_fbx_to_unity', args)).structuredContent,
+    { path, guid, objects: args.objectNames, bytes: fbx.length / 2, animations: false });
+  assert.match((await call('blender_fbx_to_unity', args)).structuredContent.error, /bereits vergeben/);
+  assert.equal(imports, 1);
   blenderOnline = false;
   assert.equal((await call('blender_scene_info')).isError, true);
   assert.equal((await mcp('tools/call', {
