@@ -5,12 +5,17 @@ const bridgeTools = [
   {
     name: 'pc_ping',
     title: 'Verbindung zum PC testen',
-    description: 'Prüft mit einem frischen zufälligen Prüfwert, ob der gekoppelte Windows-PC gerade tatsächlich antwortet.',
+    description: 'Prüft mit einem frischen zufälligen Prüfwert, ob der gekoppelte PC gerade tatsächlich antwortet.',
   },
   {
     name: 'unity_active_scene',
     title: 'Aktive Unity-Szene lesen',
     description: 'Liest Szenenname, projektbezogenen Pfad, Zahl der Objekte auf oberster Ebene und den Speicherstatus aus dem laufenden lokalen Unity-Editor.',
+  },
+  {
+    name: 'unity_game_view',
+    title: 'Laufendes Unity-Spiel ansehen',
+    description: 'Gibt ein aktuelles PNG aus der Game View des lokalen Unity-Editors im Play Mode an ChatGPT zurück. Prüft beispielsweise HUD, Menüs und laufende Spielzustände.',
   },
 ].map((tool) => ({
   ...tool,
@@ -33,11 +38,11 @@ const unityTools = catalog.tools.map(tool => {
     },
   };
 });
-const forwardedToolNames = new Set([...unityTools, ...gitTools].map(tool => tool.name));
+const forwardedToolNames = new Set(['unity_game_view', ...unityTools.map(tool => tool.name), ...gitTools.map(tool => tool.name)]);
 const tools = [...bridgeTools, ...unityTools, ...gitTools];
 
 const protocolVersion = '2026-07-28';
-const release = '0.5.0';
+const release = '0.6.0';
 const onlineWindow = 40_000;
 const argumentLimit = 96_000;
 const resultLimit = 1_600_000;
@@ -95,9 +100,9 @@ async function dashboard(request, env, path) {
     const device = await env.DB.prepare('SELECT last_seen FROM bridge_device WHERE id = 1').first();
     let status = 'Kein PC gekoppelt.';
     if (device) {
-      status = 'PC gekoppelt. Der Windows-Client ist offline.';
+      status = 'PC gekoppelt. Der PC-Bridge-Client ist offline.';
       if (device.last_seen && Date.now() - device.last_seen < onlineWindow) {
-        status = 'Der Windows-Client ist online.';
+        status = 'Der PC-Bridge-Client ist online.';
       }
     }
     const pluginLink = env.BRIDGE_PLUGIN_ARCHIVE
@@ -146,7 +151,7 @@ Kopple den Client und rufe danach PC-Bridge in ChatGPT Work auf.</p>${pluginLink
     siteToken: env.BRIDGE_SITES_TOKEN,
     deviceToken,
   }));
-  return page(`<p><label for="code">Kopplungscode für den Windows-Client</label></p>
+  return page(`<p><label for="code">Kopplungscode für den PC-Bridge-Client</label></p>
 <textarea id="code" rows="5" readonly spellcheck="false">${encoded}</textarea>
 <p>Kopiere den Code in die Eingabeaufforderung der PC-Bridge.</p><a href="/">Zum Status</a>`);
 }
@@ -256,7 +261,7 @@ async function runJob(env, tool, args) {
   const device = await env.DB.prepare('SELECT token_hash, last_seen FROM bridge_device WHERE id = 1').first();
   if (!device) return mcpError('Es ist noch kein PC gekoppelt.');
   if (!device.last_seen || now - device.last_seen >= onlineWindow) {
-    return mcpError('Der Windows-Client ist offline. Starte PC-Bridge.cmd und versuche es erneut.');
+    return mcpError('Der PC-Bridge-Client ist offline. Starte PC-Bridge auf dem gekoppelten Gerät und versuche es erneut.');
   }
   await env.DB.prepare('DELETE FROM bridge_job WHERE expires_at <= ?').bind(now).run();
 
@@ -294,7 +299,7 @@ function mcpResult(tool, result) {
       unity_unavailable: 'Unity MCP hat keine verwertbare Antwort geliefert. Prüfe den lokalen HTTP-Server auf 127.0.0.1:8080 und seine Verbindung zum Unity-Editor.',
       unity_no_scene: 'Unity MCP meldet keine aktive Szene. Prüfe, ob dein Editor mit dem MCP-Server verbunden ist.',
     };
-    return mcpError(errors[result.error] ?? 'Der Windows-Client meldet einen Fehler.');
+    return mcpError(errors[result.error] ?? 'Der PC-Bridge-Client meldet einen Fehler.');
   }
   if (tool === 'pc_ping') {
     return { content: [{ type: 'text', text: `PC verbunden. Prüfwert vom Client: ${result.challenge}` }] };
@@ -336,7 +341,7 @@ async function mcp(request, env) {
       const name = message.params?.name;
       const args = message.params?.arguments ?? {};
       if (!tools.some((tool) => tool.name === name)) return error(-32602, 'Unbekanntes Werkzeug');
-      if (!record(args) || (!forwardedToolNames.has(name) && Object.keys(args).length)) {
+      if (!record(args) || (bridgeTools.some(tool => tool.name === name) && Object.keys(args).length)) {
         return error(-32602, 'Ungültige Parameter für dieses Werkzeug.');
       }
       return reply(await runJob(env, name, args));

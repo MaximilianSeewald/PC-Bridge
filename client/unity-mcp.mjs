@@ -4,6 +4,7 @@ const endpoint = 'http://127.0.0.1:8080/mcp';
 const protocolVersion = '2025-11-25';
 const supportedVersions = new Set(['2025-03-26', '2025-06-18', protocolVersion]);
 const responseLimit = 1_250_000;
+class UnityResponseTooLarge extends Error {}
 export const unityToolNames = new Set(catalog.tools.map(tool => tool.name));
 
 async function rpcResponse(response, id) {
@@ -20,7 +21,7 @@ async function rpcResponse(response, id) {
     for (;;) {
       const { value, done } = await reader.read();
       size += value?.byteLength ?? 0;
-      if (size > responseLimit) throw new Error('Unity MCP meldet eine zu große Antwort.');
+      if (size > responseLimit) throw new UnityResponseTooLarge('Unity MCP meldet eine zu große Antwort.');
       buffer += decoder.decode(value, { stream: !done });
       if (type === 'application/json' && done) return JSON.parse(buffer);
       if (type === 'text/event-stream') {
@@ -100,7 +101,7 @@ export function createUnityMcp(fetchImpl = fetch) {
     const headers = { Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' };
     try {
       const { result: init } = await send(headers, signal, 'initialize', {
-        protocolVersion, capabilities: {}, clientInfo: { name: 'pc-bridge', version: '0.5.0' },
+        protocolVersion, capabilities: {}, clientInfo: { name: 'pc-bridge', version: '0.6.0' },
       }, ++nextId);
       if (!supportedVersions.has(init?.protocolVersion) || !init.capabilities?.tools) {
         throw new Error('Dieser Unity-MCP-Server unterstützt die erwarteten Tools nicht.');
@@ -125,6 +126,7 @@ export function createUnityMcp(fetchImpl = fetch) {
       session ??= await openSession(signal);
       return await operation(session);
     } catch (error) {
+      if (error instanceof UnityResponseTooLarge) throw error;
       const previous = session;
       session = undefined;
       await closeSession(previous);
@@ -159,4 +161,47 @@ export async function readUnityActiveScene(callTool) {
     return { ok: false, error: 'unity_unavailable' };
   }
   return { ok: true, sceneName: name, scenePath: path, isDirty, rootCount };
+}
+
+
+export async function captureUnityGameView(callTool, readResource, signal) {
+  const state = await readResource('mcpforunity://editor/state', signal);
+  const play = state?.data?.editor?.play_mode;
+  if (state?.success !== true || !play) {
+    return toolFailure('Unity MCP konnte den Play Mode nicht prüfen.');
+  }
+  if (state.data.unity?.is_batch_mode === true) {
+    return toolFailure('Für die Game View braucht der Unity-Editor eine grafische Sitzung.');
+  }
+  if (play.is_playing !== true || play.is_changing === true) {
+    return toolFailure('Starte den Play Mode in Unity und rufe unity_game_view erneut auf.');
+  }
+
+  for (const resolution of [720, 448]) {
+    const result = await callTool('manage_camera', {
+      action: 'screenshot',
+      capture_source: 'game_view',
+      include_image: true,
+      max_resolution: resolution,
+      output_folder: 'Temp/PC-Bridge-Captures',
+    }, signal).catch(error => {
+      if (error instanceof UnityResponseTooLarge) return null;
+      throw error;
+    });
+    if (!result) continue;
+    if (result.isError) {
+      const message = toolPayload(result)?.message ?? result.content.find(block => block.type === 'text')?.text;
+      return toolFailure(typeof message === 'string' ? message.slice(0, 500) : 'Unity konnte das Spielbild nicht erfassen.');
+    }
+    const png = result.content.find(block => block?.type === 'image' && block.mimeType === 'image/png' &&
+      typeof block.data === 'string' && block.data.startsWith('iVBORw0KGgo'));
+    if (!png) return toolFailure('Unity MCP hat kein PNG der Game View geliefert.');
+
+    // The upstream envelope is capped below the relay's result limit.
+    return { content: [
+      { type: 'text', text: 'Unity Game View im Play Mode.' },
+      { type: 'image', mimeType: 'image/png', data: png.data },
+    ] };
+  }
+  return toolFailure('Das PNG ist zu groß für die PC-Bridge. Verkleinere die Unity Game View und versuche es erneut.');
 }

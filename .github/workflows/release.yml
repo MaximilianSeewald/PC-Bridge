@@ -43,6 +43,14 @@ jobs:
           python3 package-release.py
           python3 -m zipfile -t dist/packages/PC-Bridge-Sites-Relay.zip
           python3 -m zipfile -t dist/packages/PC-Bridge-Windows-MCP.zip
+          linux_client="$(mktemp -d)/Linux Client"
+          python3 -m zipfile -t dist/packages/PC-Bridge-Linux-MCP.zip
+          unzip -q dist/packages/PC-Bridge-Linux-MCP.zip -d "$linux_client"
+          test -x "$linux_client/pc-bridge.sh"
+          if output="$(printf '!invalid\n' | "$linux_client/pc-bridge.sh" 2>&1)"; then
+            exit 1
+          fi
+          grep -F 'Ungültiger Kopplungscode' <<< "$output"
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -55,14 +63,15 @@ jobs:
               --title "PC-Bridge $tag"
           elif [[ "$(jq -r .isDraft <<< "$release")" == false ]]; then
             jq -e '[.assets[].name] | sort == [
-              "PC-Bridge-Sites-Relay.zip", "PC-Bridge-Windows-MCP.zip"
+              "PC-Bridge-Linux-MCP.zip", "PC-Bridge-Sites-Relay.zip", "PC-Bridge-Windows-MCP.zip"
             ]' <<< "$release" > /dev/null
             exit 0
           fi
 
           gh release upload "$tag" --clobber \
             dist/packages/PC-Bridge-Sites-Relay.zip \
-            dist/packages/PC-Bridge-Windows-MCP.zip
+            dist/packages/PC-Bridge-Windows-MCP.zip \
+            dist/packages/PC-Bridge-Linux-MCP.zip
 
           main_sha="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)"
           latest=false

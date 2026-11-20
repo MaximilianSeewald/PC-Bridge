@@ -1,4 +1,4 @@
-# PC-Bridge unter Windows
+# PC-Bridge unter Windows und Linux
 
 Voraussetzung ist Node.js 22 oder neuer. Für Unity nutzt PC-Bridge
 [MCP for Unity](https://coplaydev.github.io/unity-mcp/getting-started/install).
@@ -14,9 +14,11 @@ Voraussetzung ist Node.js 22 oder neuer. Für Unity nutzt PC-Bridge
    für Python und `uv`. Starte den lokalen HTTP-Server am Standardport
    `8080` und öffne eine Szene. PC-Bridge verbindet sich mit
    `http://127.0.0.1:8080/mcp`.
-3. Entpacke **PC-Bridge-Windows-MCP.zip** aus demselben Release wie
-   deine Site. Klicke auf der privaten Site auf **Kopplungscode anzeigen**
-   und füge den vollständigen Code nach dem Start von **PC-Bridge.cmd** ein.
+3. Entpacke das Client-ZIP für dein Betriebssystem aus demselben Release
+   wie deine Site. Starte unter Windows **PC-Bridge.cmd**. Unter Linux
+   startest du **./pc-bridge.sh** im Terminal. Klicke auf der privaten
+   Site auf **Kopplungscode anzeigen** und füge den vollständigen Code
+   in den Client ein.
    Ein neuer Code ersetzt die bisherige Kopplung.
 4. Warte auf **Verbunden**. Wähle im Work-Chat das Plugin deiner Site.
    `pc_ping` prüft die Verbindung zum PC. `unity_active_scene` liest
@@ -33,6 +35,30 @@ Strg+C beendet den Client. **Kopplung aufheben** widerruft den bisherigen
 Gerätezugang. Behandle den Kopplungscode wie ein Passwort. Wenn ein
 Schreibaufruf wegen eines Timeouts endet, prüfe den Zustand im Editor
 vor einem erneuten Aufruf.
+
+## Start unter Linux
+
+Entpacke `PC-Bridge-Linux-MCP.zip` und starte im entpackten Ordner
+`./pc-bridge.sh`. Falls dein Entpacker die Ausführungsrechte entfernt,
+kannst du `sh ./pc-bridge.sh` verwenden. Unity Editor und Unity MCP
+laufen auf demselben Rechner wie der Client. Für Git-Funktionen verwende
+einen absoluten Linux-Pfad in `pc-bridge.config.json` und richte lokal
+den GitHub-Zugriff ein. Eine Kopplung mit einem neuen Code ersetzt die
+bisherige Gerätekopplung derselben privaten Site.
+
+## Bild aus dem laufenden Unity-Spiel
+
+Starte den Play Mode und rufe `unity_game_view` im Chat auf. Der
+Client fordert über `manage_camera` ein PNG der Game View an und sendet
+es direkt im Tool-Ergebnis. Die komponierte Game View kann auch HUD und
+Unity-UI zeigen. Wenn Unity den Bildpuffer nicht lesen kann, verwendet
+MCP for Unity gegebenenfalls die Kameraansicht. Für Bewegungen lassen sich
+mehrere Bilder zu unterschiedlichen Zeitpunkten abrufen.
+
+Das Werkzeug erfasst den Unity-Editor, der mit dem lokalen MCP-Server
+verbunden ist. Ein separat gestarteter Standalone-Player oder dessen
+Fenster erfordert eine eigene Capture-Anbindung. Unity speichert die
+lokalen Kopien unter `Temp/PC-Bridge-Captures`.
 
 ## Testmodus für Unity-Multiplayer unter Windows
 
@@ -76,19 +102,19 @@ und der Inspector die neue Position und den Rigidbody zeigt.
 
 ## Git für ContinueWork einrichten
 
-1. Installiere Git für Windows und klone das GitHub-Repository des Spiels.
+1. Installiere Git und klone das GitHub-Repository des Spiels.
    Öffne in Unity diesen Checkout. `Assets/`, `Packages/` und
    `ProjectSettings/` liegen direkt an der Git-Wurzel. Versioniere
    Unity-`.meta`-Dateien und ignoriere die generierten Ordner wie
    `Library/`, `Temp/` und `Logs/`.
 2. Kopiere `pc-bridge.config.example.json` als `pc-bridge.config.json`
-   neben `PC-Bridge.cmd`. Setze `projectPath` auf den absoluten Pfad
+   neben dein Startskript. Setze `projectPath` auf den absoluten Pfad
    dieses Checkouts, `repository` auf `GitHubName/MeinSpiel` und
    `baseBranch` auf den Basisbranch. Die Fetch- und Push-URL von
    `origin` müssen auf dieses Repository zeigen. GitHub-Zugriff über
    HTTPS und Git Credential Manager oder über SSH einmal lokal einrichten.
    Setze auch Git `user.name` und `user.email` im Checkout.
-3. Starte den aktualisierten Windows-Client. Öffne den ContinueWork-Chat
+3. Starte den aktualisierten Client. Öffne den ContinueWork-Chat
    mit dem aktualisierten PC-Bridge-Plugin.
 
 | Werkzeug | Aufgabe |
