@@ -51,7 +51,7 @@ function output(data, error = false) {
 
 function failureMessage(error, signal) {
   if (signal.aborted) return 'Zeitlimit erreicht. Prüfe vor einem erneuten Schreibvorgang zuerst project_git_status.';
-  if (error.code === 'ENOENT' && error.path === 'git') return 'Git für Windows fehlt oder ist nicht im PATH.';
+  if (error.code === 'ENOENT' && error.path === 'git') return 'Git fehlt oder ist nicht im PATH.';
   if (typeof error.stderr !== 'string') return error.message;
   if (/Authentication failed|Permission denied|terminal prompts disabled|could not read Username/i.test(error.stderr)) {
     return 'GitHub-Zugriff fehlgeschlagen. Prüfe die lokale Anmeldung für origin.';

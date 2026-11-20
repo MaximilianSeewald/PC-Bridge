@@ -76,8 +76,8 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   assert.deepEqual(discovery.result.supportedVersions, ['2026-07-28']);
   const list = await mcp('tools/list', {}, {});
   const actual = list.result.tools;
-  assert.deepEqual(actual.map(tool => tool.name), ['pc_ping', 'unity_active_scene', ...catalog.tools.map(tool => tool.name), ...gitTools.map(tool => tool.name)]);
-  assert.deepEqual(actual.slice(2).map(tool => tool.inputSchema), [...catalog.tools, ...gitTools].map(tool => tool.inputSchema));
+  assert.deepEqual(actual.map(tool => tool.name), ['pc_ping', 'unity_active_scene', 'unity_game_view', ...catalog.tools.map(tool => tool.name), ...gitTools.map(tool => tool.name)]);
+  assert.deepEqual(actual.slice(3).map(tool => tool.inputSchema), [...catalog.tools, ...gitTools].map(tool => tool.inputSchema));
   assert.equal(actual.find(tool => tool.name === 'manage_gameobject').annotations.readOnlyHint, false);
   assert.equal(actual.find(tool => tool.name === 'manage_gameobject').annotations.destructiveHint, true);
   assert.equal((await mcp('tools/call', { name: 'pc_ping' }, {})).result.isError, true);
@@ -85,6 +85,7 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   assert.equal((await mcp('tools/call', { name: 'epoch_git_status' })).error.code, -32602);
   assert.equal((await mcp('tools/call', { name: 'manage_scene', arguments: [] })).error.code, -32602);
   assert.equal((await mcp('tools/call', { name: 'unity_active_scene', arguments: { action: 'save' } })).error.code, -32602);
+  assert.equal((await mcp('tools/call', { name: 'unity_game_view', arguments: { camera: 'Other' } })).error.code, -32602);
   assert.equal((await call('/pair', { method: 'POST', headers: { Origin: origin } })).status, 403);
   assert.equal((await call('/pair', { method: 'POST', headers: { ...ownerHeader, Origin: 'https://unrelated.example' } })).status, 403);
   assert.equal((await call('/pair', { method: 'POST', headers: { ...browserForm, 'Sec-Fetch-Site': 'cross-site' } })).status, 403);
@@ -99,7 +100,7 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   assert.match((await mcp('tools/call', { name: 'pc_ping' })).result.content[0].text, /kein PC gekoppelt/);
 });
 
-async function roundTrip(mcp, device, name, args, callUnity, callGit) {
+async function roundTrip(mcp, device, name, args, callUnity, callGit, readUnityResource) {
   const pending = mcp('tools/call', { name, arguments: args });
   let job;
   for (let attempt = 0; attempt < 30 && !job; attempt += 1) {
@@ -113,7 +114,7 @@ async function roundTrip(mcp, device, name, args, callUnity, callGit) {
     await assert.rejects(device('/api/device/result', { id: job.id, result: { ok: true, challenge: 'wrong' } }),
       { status: 400 });
   }
-  const result = await runJob(job, callUnity, callGit);
+  const result = await runJob(job, callUnity, callGit, readUnityResource);
   assert.deepEqual(await device('/api/device/result', { id: job.id, result }), { accepted: true });
   return { job, reply: (await pending).result };
 }
@@ -151,6 +152,8 @@ test('create, move, add a component and read back the scene in a single Unity se
   await device('/api/device/poll', {});
 
   const observed = [];
+  const screenshot = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jgZkAAAAASUVORK5CYII=';
+  let playing = true;
   const created = { name: '', position: null, components: [] };
   const unityServer = createServer(async (req, res) => {
     const chunks = [];
@@ -168,7 +171,9 @@ test('create, move, add a component and read back the scene in a single Unity se
       result = { protocolVersion: '2025-06-18', capabilities: { tools: {} } };
     } else if (message.method === 'resources/read') {
       result = { contents: [{ uri: message.params.uri, mimeType: 'application/json',
-        text: JSON.stringify({ success: true, data: { projectRoot: 'C:/Unity/Game' } }) }] };
+        text: JSON.stringify({ success: true, data: message.params.uri === 'mcpforunity://editor/state'
+          ? { unity: { is_batch_mode: false }, editor: { play_mode: { is_playing: playing } } }
+          : { projectRoot: 'C:/Unity/Game' } }) }] };
     } else {
       let payload;
       if (name === 'manage_tools') payload = { activated: args.group };
@@ -192,7 +197,8 @@ test('create, move, add a component and read back the scene in a single Unity se
       }
       if (name === 'find_gameobjects') payload = { success: false, message: 'Unity returned a tool error' };
       if (name === 'manage_camera') {
-        result = { content: [{type: 'image', mimeType: 'image/png', data: 'AA=='}] };
+        const data = args.max_resolution === 720 ? screenshot + 'A'.repeat(1_480_000) : screenshot;
+        result = { content: [{type: 'image', mimeType: 'image/png', data}] };
       } else {
         result = { content: [{type: 'text', text: JSON.stringify(payload)}], structuredContent: payload };
       }
@@ -211,7 +217,7 @@ test('create, move, add a component and read back the scene in a single Unity se
     assert.equal(url, 'http://127.0.0.1:8080/mcp');
     return fetch(`http://127.0.0.1:${unityServer.address().port}/mcp`, options);
   });
-  const call = async (name, args) => (await roundTrip(mcp, device, name, args, callTool)).reply;
+  const call = async (name, args) => (await roundTrip(mcp, device, name, args, callTool, undefined, readResource)).reply;
 
   assert.equal((await call('manage_gameobject', {
     action: 'create', name: 'PCBridge_Test', primitive_type: 'Cube',
@@ -224,7 +230,20 @@ test('create, move, add a component and read back the scene in a single Unity se
   assert.match((await call('unity_active_scene', {})).content[0].text, /Unity-Szene: Übung/);
   assert.equal((await call('find_gameobjects', { search_term: 'Missing' })).isError, true);
   assert.deepEqual((await call('manage_camera', { action: 'screenshot' })).content,
-    [{type: 'image', mimeType: 'image/png', data: 'AA=='}]);
+    [{type: 'image', mimeType: 'image/png', data: screenshot}]);
+  const gameView = await call('unity_game_view', {});
+  assert.deepEqual(gameView.content, [
+    { type: 'text', text: 'Unity Game View im Play Mode.' },
+    { type: 'image', mimeType: 'image/png', data: screenshot },
+  ]);
+  const captures = observed.filter(entry => entry.params?.name === 'manage_camera').slice(1);
+  assert.deepEqual(captures.map(entry => entry.params.arguments), [720, 448].map(resolution => ({
+    action: 'screenshot', capture_source: 'game_view', include_image: true,
+    max_resolution: resolution, output_folder: 'Temp/PC-Bridge-Captures',
+  })));
+  playing = false;
+  assert.match((await call('unity_game_view', {})).content[0].text, /Starte den Play Mode/);
+  assert.equal(observed.filter(entry => entry.params?.name === 'manage_camera').length, 3);
   assert.deepEqual(await readResource('mcpforunity://project/info'), {
     success: true, data: { projectRoot: 'C:/Unity/Game' },
   });

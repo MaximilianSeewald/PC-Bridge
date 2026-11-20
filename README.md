@@ -1,25 +1,26 @@
 # PC-Bridge
 
 PC-Bridge verbindet einen ChatGPT-Work-Chat im Browser mit einem lokalen
-Windows-PC und übergibt Unity-Aufrufe an den lokalen MCP-Server.
+Windows- oder Linux-PC und übergibt Unity-Aufrufe an den lokalen MCP-Server.
 
 - `pc_ping` sendet einen frischen Prüfwert an den Windows-Client und meldet dessen Antwort.
 - `unity_active_scene` liest die aktuell im lokalen Unity-Editor geöffnete
-  Szene und zeigt ihren Speicherstatus. [Unity einrichten](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#pc-bridge-unter-windows)
+  Szene und zeigt ihren Speicherstatus. [Unity einrichten](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#pc-bridge-unter-windows-und-linux)
+- `unity_game_view` liefert ein aktuelles PNG der Game View im Play Mode.
 - Der Katalog spiegelt die integrierten Werkzeuge von MCP for Unity
-  v10.0.0 mitsamt ihren Parameterschemas. Der Windows-Client startet
+  v10.0.0 mitsamt ihren Parameterschemas. Der Client startet
   die Unity-Anbindung automatisch beim ersten Unity-Aufruf.
 
 Die private ChatGPT Site hostet den Web-MCP-Endpunkt und die Auftragswarteschlange
-in D1. Der Windows-Client holt Aufträge per HTTPS ab und übergibt sie
+in D1. Der Client holt Aufträge per HTTPS ab und übergibt sie
 an den lokalen Unity-MCP-Server. So laufen auch Änderungen im lokalen
 Editor. Die private Site und die Gerätekopplung regeln den Zugriff.
 Die `project_git_*`-Werkzeuge verwenden Git direkt im konfigurierten
-Unity-Checkout unter Windows. [Git für ContinueWork einrichten](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#git-für-continuework-einrichten)
+Unity-Checkout. [Git für ContinueWork einrichten](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#git-für-continuework-einrichten)
 
 ## Unity-Projektdaten
 
-Das Unity-Projekt liegt einmal lokal auf dem Windows-PC. Für Live-Abfragen
+Das Unity-Projekt liegt einmal lokal auf dem gekoppelten PC. Für Live-Abfragen
 arbeitet ChatGPT über PC-Bridge mit dem laufenden Editor und erhält die
 Antwort des jeweiligen Unity-MCP-Tools. So lassen sich auch ungespeicherte
 Änderungen erkennen. GitHub kann parallel den gespeicherten Stand
@@ -28,8 +29,8 @@ und `ProjectSettings/`. Unity erzeugt lokale Arbeitsordner wie `Library/`.
 
 ## Pakete
 
-Jeder Push auf `main` startet Tests und baut zwei ZIP-Dateien. Sind die
-Prüfungen erfolgreich, veröffentlicht der Workflow beide zusammen als
+Jeder Push auf `main` startet Tests und baut drei ZIP-Dateien. Sind die
+Prüfungen erfolgreich, veröffentlicht der Workflow alle drei zusammen als
 [GitHub Release](https://github.com/MaximilianSeewald/PC-Bridge/releases).
 Der Tag `main-<Laufnummer>-<Commit>` zeigt, aus welchem Stand die Pakete
 gebaut wurden. Die Veröffentlichung einer Site erfolgt in ChatGPT Sites.
@@ -37,12 +38,13 @@ gebaut wurden. Die Veröffentlichung einer Site erfolgt in ChatGPT Sites.
 | Paket | Verwendung |
 | --- | --- |
 | `PC-Bridge-Sites-Relay.zip` | Site-Projekt mit Worker, Hosting-Konfiguration und D1-Migration für die Einrichtung oder Aktualisierung einer privaten Site. |
-| `PC-Bridge-Windows-MCP.zip` | Startskript, Windows-Client und lokaler MCP-Server. Entpacken und `PC-Bridge.cmd` starten. [Anleitung](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client). |
+| `PC-Bridge-Windows-MCP.zip` | Startprogramme und Windows-Client. Entpacken und `PC-Bridge.cmd` starten. [Anleitung](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client). |
+| `PC-Bridge-Linux-MCP.zip` | Linux-Client. Entpacken und `./pc-bridge.sh` starten. [Anleitung](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#start-unter-linux). |
 
 ## Eigene private Site einrichten
 
 Du brauchst Zugang zu ChatGPT Sites und zur Erstellung eines privaten Site-Plugins.
-Auf Windows brauchst du Node.js 22 oder neuer.
+Für den Client brauchst du Node.js 22 oder neuer.
 
 1. Klone das Repository oder entpacke das Relay-ZIP. Öffne den Ordner in der ChatGPT-Desktop-App als
    lokales Projekt. Prüfe den Build im Hauptordner mit `npm run build`.
@@ -78,7 +80,7 @@ Auf Windows brauchst du Node.js 22 oder neuer.
    [Servicezugriff auf private Sites](https://learn.chatgpt.com/docs/sites/data-and-connections#call-a-private-site-with-a-siwc-bypass-token)
 4. Installiere und verbinde das erzeugte Plugin bei Bedarf unter **Plugins →
    Persönlich → Von dir erstellt**. Folge dann der
-   [Anleitung für den Windows-Client](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client).
+   [Anleitung für den Client](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client).
 
 Der Kopplungscode enthält die Adresse der Site und die Zugangsdaten für
 den PC. Kopiere ihn direkt von deiner privaten Site in den Client. Über
@@ -100,7 +102,7 @@ den PC. Kopiere ihn direkt von deiner privaten Site in den Client. Über
    zu bauen und als neue private Version zu veröffentlichen. Verwende
    dabei die vorhandenen Site-Secrets und wende bei Bedarf die mitgelieferten
    Datenbankmigrationen an.
-4. Starte den Windows-Client aus demselben Release und prüfe im bestehenden
+4. Starte den Client aus demselben Release und prüfe im bestehenden
    `@PC-Bridge`-Plugin mit `pc_ping`, ob der gekoppelte PC antwortet.
 
 ## Lokal testen
@@ -117,5 +119,5 @@ Unity-MCP-Endpunkt. Der gemeinsame Abnahmelauf im
 [Client-Handbuch](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#gemeinsamer-abnahmelauf)
 prüft die Strecke bis zum echten Unity-Editor.
 
-Die beiden Release-Archive lassen sich im Repository mit
+Die drei Release-Archive lassen sich im Repository mit
 `python3 package-release.py` unter `dist/packages/` erstellen.

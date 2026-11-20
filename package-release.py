@@ -1,4 +1,4 @@
-"""Build the Windows and ChatGPT Sites release archives."""
+"""Build the Windows, Linux and ChatGPT Sites release archives."""
 
 import argparse
 import json
@@ -6,6 +6,13 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 ROOT = Path(__file__).resolve().parent
+CLIENT_FILES = {
+    f"client/{name}": name
+    for name in (
+        "README.md", "pc-bridge.mjs", "unity-mcp.mjs", "unity-tools.json",
+        "project-git.mjs", "git-tools.json",
+    )
+}
 PACKAGES = {
     "PC-Bridge-Sites-Relay.zip": {
         "README.md": "README.md",
@@ -20,12 +27,16 @@ PACKAGES = {
         "drizzle/meta/_journal.json": "drizzle/meta/_journal.json",
     },
     "PC-Bridge-Windows-MCP.zip": {
-        f"client/{name}": name
-        for name in (
-            "PC-Bridge.cmd", "README.md", "pc-bridge.mjs", "unity-mcp.mjs", "unity-tools.json",
-            "project-git.mjs", "git-tools.json", "pc-bridge.config.example.json",
-            "PC-Bridge-Testmodus.cmd", "firewall-notifications.ps1",
-        )
+        **CLIENT_FILES,
+        "client/PC-Bridge.cmd": "PC-Bridge.cmd",
+        "client/PC-Bridge-Testmodus.cmd": "PC-Bridge-Testmodus.cmd",
+        "client/firewall-notifications.ps1": "firewall-notifications.ps1",
+        "client/pc-bridge.config.example.json": "pc-bridge.config.example.json",
+    },
+    "PC-Bridge-Linux-MCP.zip": {
+        **CLIENT_FILES,
+        "client/pc-bridge.sh": "pc-bridge.sh",
+        "client/pc-bridge.config.linux.example.json": "pc-bridge.config.example.json",
     },
 }
 
@@ -43,7 +54,11 @@ def build_packages(output):
                     content = (json.dumps(manifest, indent=2) + "\n").encode("utf-8")
                 elif target.endswith(".cmd"):
                     content = content.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
-                archive.writestr(ZipInfo(target), content, compress_type=ZIP_DEFLATED)
+                entry = ZipInfo(target)
+                if target.endswith(".sh"):
+                    entry.create_system = 3  # Unix
+                    entry.external_attr = 0o100755 << 16
+                archive.writestr(entry, content, compress_type=ZIP_DEFLATED)
         print(archive_path)
 
 
