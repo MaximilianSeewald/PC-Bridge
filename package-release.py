@@ -24,6 +24,7 @@ PACKAGES = {
         for name in (
             "PC-Bridge.cmd", "README.md", "pc-bridge.mjs", "unity-mcp.mjs", "unity-tools.json",
             "project-git.mjs", "git-tools.json", "pc-bridge.config.example.json",
+            "PC-Bridge-Testmodus.cmd", "firewall-notifications.ps1",
         )
     },
 }
