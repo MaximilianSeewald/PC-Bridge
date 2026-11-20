@@ -373,7 +373,6 @@ test('import a ChatGPT file reference into the local Unity project as a sprite',
     { name: 'manage_asset', args: { action: 'import', path } },
     { name: 'manage_texture', args: {
       action: 'set_import_settings', path, as_sprite: { pixels_per_unit: 128 },
-      import_settings: { alpha_is_transparency: true, generate_mipmaps: false },
     } },
   ]);
   assert.deepEqual(await readFile(join(root, path)), png);

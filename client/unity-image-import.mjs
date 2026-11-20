@@ -170,7 +170,6 @@ export function createUnityImageImporter(unity, configuredPath, fetchImpl = fetc
       }
       const sprite = await unity.callTool('manage_texture', {
         action: 'set_import_settings', path: assetPath, as_sprite: { pixels_per_unit: pixelsPerUnit },
-        import_settings: { alpha_is_transparency: extension === 'png', generate_mipmaps: false },
       }, signal);
       if (sprite.isError || toolPayload(sprite)?.success !== true) {
         throw new Error('Unity hat das Bild importiert, aber noch nicht als Sprite eingerichtet.');
