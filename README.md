@@ -7,6 +7,7 @@ Windows- oder Linux-PC und übergibt Unity-Aufrufe an den lokalen MCP-Server.
 - `unity_active_scene` liest die aktuell im lokalen Unity-Editor geöffnete
   Szene und zeigt ihren Speicherstatus. [Unity einrichten](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#pc-bridge-unter-windows-und-linux)
 - `unity_game_view` liefert ein aktuelles PNG der Game View im Play Mode.
+- `unity_import_chat_image` übernimmt ein PNG oder JPEG aus dem Chat als Sprite in Unity.
 - Der Katalog spiegelt die integrierten Werkzeuge von MCP for Unity
   v10.0.0 mitsamt ihren Parameterschemas. Der Client startet
   die Unity-Anbindung automatisch beim ersten Unity-Aufruf.

@@ -22,6 +22,38 @@ const bridgeTools = [
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
 }));
+const imageImportTool = {
+  name: 'unity_import_chat_image',
+  title: 'Chatbild als Unity-Sprite importieren',
+  description: 'Importiert ein im Chat ausgewähltes PNG oder JPEG aus einer Datei als Sprite in das aktive lokale Unity-Projekt. Speichert unter Assets/Art/ChatImports. Fordere einen Chat-Dateiverweis an und gib einen neuen Assetnamen ohne Dateiendung an.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      file: {
+        type: 'object',
+        properties: {
+          download_url: { type: 'string' },
+          file_id: { type: 'string' },
+          mime_type: { type: 'string' },
+          file_name: { type: 'string' },
+        },
+        required: ['download_url', 'file_id'],
+        additionalProperties: false,
+      },
+      assetName: {
+        type: 'string',
+        description: 'Neuer Name aus Buchstaben, Ziffern, Unterstrichen oder Bindestrichen. Keine Erweiterung.',
+        minLength: 1,
+        maxLength: 80,
+      },
+      pixelsPerUnit: { type: 'integer', minimum: 1, maximum: 1024, default: 100 },
+    },
+    required: ['file', 'assetName'],
+    additionalProperties: false,
+  },
+  annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  _meta: { 'openai/fileParams': ['file'] },
+};
 const externalTools = new Set([
   'batch_execute', 'execute_code', 'execute_custom_tool', 'execute_menu_item',
   'generate_image', 'generate_model', 'import_model', 'manage_packages', 'unity_docs',
@@ -38,11 +70,11 @@ const unityTools = catalog.tools.map(tool => {
     },
   };
 });
-const forwardedToolNames = new Set(['unity_game_view', ...unityTools.map(tool => tool.name), ...gitTools.map(tool => tool.name)]);
-const tools = [...bridgeTools, ...unityTools, ...gitTools];
+const forwardedToolNames = new Set(['unity_game_view', imageImportTool.name, ...unityTools.map(tool => tool.name), ...gitTools.map(tool => tool.name)]);
+const tools = [...bridgeTools, imageImportTool, ...unityTools, ...gitTools];
 
 const protocolVersion = '2026-07-28';
-const release = '0.6.0';
+const release = '0.7.0';
 const onlineWindow = 40_000;
 const argumentLimit = 96_000;
 const resultLimit = 1_600_000;
@@ -343,6 +375,16 @@ async function mcp(request, env) {
       if (!tools.some((tool) => tool.name === name)) return error(-32602, 'Unbekanntes Werkzeug');
       if (!record(args) || (bridgeTools.some(tool => tool.name === name) && Object.keys(args).length)) {
         return error(-32602, 'Ungültige Parameter für dieses Werkzeug.');
+      }
+      if (name === imageImportTool.name) {
+        const { file, assetName, pixelsPerUnit } = args;
+        if (!record(file) || typeof file.download_url !== 'string' || !file.download_url ||
+            file.download_url.length > 8192 || typeof file.file_id !== 'string' || !file.file_id ||
+            file.file_id.length > 512 || typeof assetName !== 'string' || !assetName || assetName.length > 80 ||
+            (pixelsPerUnit !== undefined && (!Number.isInteger(pixelsPerUnit) || pixelsPerUnit < 1 || pixelsPerUnit > 1024))) {
+          return error(-32602, 'Wähle ein Chatbild und gib einen gültigen Assetnamen an.');
+        }
+        return reply(await runJob(env, name, { file: { download_url: file.download_url }, assetName, pixelsPerUnit }));
       }
       return reply(await runJob(env, name, args));
     }
