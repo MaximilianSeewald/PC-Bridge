@@ -10,7 +10,7 @@ CLIENT_FILES = {
     f"client/{name}": name
     for name in (
         "README.md", "pc-bridge.mjs", "unity-mcp.mjs", "unity-tools.json",
-        "project-git.mjs", "git-tools.json", "unity-image-import.mjs",
+        "project-git.mjs", "git-tools.json", "unity-image-import.mjs", "blender-mcp.mjs",
     )
 }
 PACKAGES = {

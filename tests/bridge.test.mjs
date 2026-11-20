@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -10,6 +11,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import worker from '../worker/index.js';
 import { deviceClient, parsePairingCode, runJob } from '../client/pc-bridge.mjs';
+import { createBlenderMcp } from '../client/blender-mcp.mjs';
 import { createUnityMcp } from '../client/unity-mcp.mjs';
 import { createUnityImageImporter } from '../client/unity-image-import.mjs';
 import catalog from '../client/unity-tools.json' with { type: 'json' };
@@ -80,8 +82,11 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   assert.deepEqual(discovery.result.supportedVersions, ['2026-07-28']);
   const list = await mcp('tools/list', {}, {});
   const actual = list.result.tools;
-  assert.deepEqual(actual.map(tool => tool.name), ['pc_ping', 'unity_active_scene', 'unity_game_view', 'unity_import_chat_image', ...catalog.tools.map(tool => tool.name), ...gitTools.map(tool => tool.name)]);
-  assert.deepEqual(actual.slice(4).map(tool => tool.inputSchema), [...catalog.tools, ...gitTools].map(tool => tool.inputSchema));
+  assert.deepEqual(actual.map(tool => tool.name), [
+    'pc_ping', 'unity_active_scene', 'unity_game_view', 'blender_scene_info', 'blender_viewport',
+    'unity_import_chat_image', ...catalog.tools.map(tool => tool.name), ...gitTools.map(tool => tool.name),
+  ]);
+  assert.deepEqual(actual.slice(6).map(tool => tool.inputSchema), [...catalog.tools, ...gitTools].map(tool => tool.inputSchema));
   const imageImport = actual.find(tool => tool.name === 'unity_import_chat_image');
   assert.deepEqual(imageImport._meta, { 'openai/fileParams': ['file'] });
   assert.deepEqual(imageImport.inputSchema.properties.file.required, ['download_url', 'file_id']);
@@ -111,7 +116,7 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   assert.match((await mcp('tools/call', { name: 'pc_ping' })).result.content[0].text, /kein PC gekoppelt/);
 });
 
-async function roundTrip(mcp, device, name, args, callUnity, callGit, readUnityResource, importImage, expectedArgs = args) {
+async function roundTrip(mcp, device, name, args, callUnity, callGit, readUnityResource, importImage, expectedArgs = args, callBlender) {
   const pending = mcp('tools/call', { name, arguments: args });
   let job;
   for (let attempt = 0; attempt < 30 && !job; attempt += 1) {
@@ -125,7 +130,7 @@ async function roundTrip(mcp, device, name, args, callUnity, callGit, readUnityR
     await assert.rejects(device('/api/device/result', { id: job.id, result: { ok: true, challenge: 'wrong' } }),
       { status: 400 });
   }
-  const result = await runJob(job, callUnity, callGit, readUnityResource, importImage);
+  const result = await runJob(job, callUnity, callGit, readUnityResource, importImage, callBlender);
   assert.deepEqual(await device('/api/device/result', { id: job.id, result }), { accepted: true });
   return { job, reply: (await pending).result };
 }
@@ -141,6 +146,65 @@ test('the paired client claims jobs once and returns fresh ping values', async (
   assert.match(first.reply.content[0].text, new RegExp(first.job.challenge));
   assert.notEqual(first.job.challenge, second.job.challenge);
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM bridge_job').get().n, 0);
+});
+
+test('Blender scene text and viewport PNG pass through stdio and the paired relay', async (t) => {
+  const { mcp, pair } = prepareBridge(t);
+  const device = await pair();
+  await device('/api/device/poll', {});
+  const png = {
+    type: 'image', mimeType: 'image/png',
+    data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jgZkAAAAASUVORK5CYII=',
+  };
+  let blenderOnline = true;
+  const script = `
+    const assert = require('node:assert/strict');
+    const { createInterface } = require('node:readline');
+    const expectedParams = {
+      get_scene_info: {},
+      look: { mode: 'viewport', shading: 'solid', max_size: 480 },
+    };
+    let phase = 0;
+    createInterface({ input: process.stdin }).on('line', (line) => {
+      const message = JSON.parse(line);
+      assert.equal(message.jsonrpc, '2.0');
+      const reply = (result) => console.log(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+      if (phase++ === 0) {
+        assert.equal(message.method, 'initialize');
+        return reply({ protocolVersion: '2025-11-25', capabilities: { tools: {} } });
+      }
+      if (phase === 2) {
+        assert.equal(message.method, 'notifications/initialized');
+        assert.equal(message.id, undefined);
+        return;
+      }
+      assert.equal(message.method, 'tools/call');
+      const { name, arguments: args } = message.params;
+      assert.deepEqual(args, expectedParams[name]);
+      reply({ content: name === 'look'
+        ? [${JSON.stringify(png)}]
+        : [{ type: 'text', text: process.argv[1] === 'offline'
+          ? 'Error getting scene info: Could not connect to Blender'
+          : 'MESH Würfel' }], _meta: { ignored: true } });
+    });
+  `;
+  const blender = createBlenderMcp((command, args, options) => {
+    assert.equal(command, 'uvx');
+    assert.deepEqual(args, ['mcp-for-blender@2.3.1']);
+    assert.equal(options.env.BLENDER_HOST, '127.0.0.1');
+    assert.equal(options.env.BLENDER_MCP_APPS, '0');
+    return spawn(process.execPath, ['-e', script, blenderOnline ? 'online' : 'offline'], options);
+  });
+  const unity = () => assert.fail('Blender must not require Unity');
+  const call = async (name) => (await roundTrip(mcp, device, name, {}, unity,
+    undefined, undefined, undefined, {}, blender)).reply;
+  assert.deepEqual((await call('blender_scene_info')).content, [{ type: 'text', text: 'MESH Würfel' }]);
+  assert.deepEqual((await call('blender_viewport')).content, [png]);
+  blenderOnline = false;
+  assert.equal((await call('blender_scene_info')).isError, true);
+  assert.equal((await mcp('tools/call', {
+    name: 'blender_viewport', arguments: { image: '/etc/passwd' },
+  })).error.code, -32602);
 });
 
 test('all catalog names and nested inputs are routed to the local Unity client', async () => {

@@ -17,6 +17,16 @@ const bridgeTools = [
     title: 'Laufendes Unity-Spiel ansehen',
     description: 'Gibt ein aktuelles PNG aus der Game View des lokalen Unity-Editors im Play Mode an ChatGPT zurück. Prüft beispielsweise HUD, Menüs und laufende Spielzustände.',
   },
+  {
+    name: 'blender_scene_info',
+    title: 'Geöffnete Blender-Szene lesen',
+    description: 'Liest die geöffnete lokale Blender-Szene mit Objektanzahl, Auswahl und Positionen der Objekte auf oberster Ebene.',
+  },
+  {
+    name: 'blender_viewport',
+    title: 'Blender-Viewport ansehen',
+    description: 'Gibt ein aktuelles PNG aus der lokalen Blender-3D-Ansicht in der Solid-Darstellung an ChatGPT zurück.',
+  },
 ].map((tool) => ({
   ...tool,
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
@@ -70,11 +80,14 @@ const unityTools = catalog.tools.map(tool => {
     },
   };
 });
-const forwardedToolNames = new Set(['unity_game_view', imageImportTool.name, ...unityTools.map(tool => tool.name), ...gitTools.map(tool => tool.name)]);
+const forwardedToolNames = new Set([
+  'unity_game_view', 'blender_scene_info', 'blender_viewport', imageImportTool.name,
+  ...unityTools.map(tool => tool.name), ...gitTools.map(tool => tool.name),
+]);
 const tools = [...bridgeTools, imageImportTool, ...unityTools, ...gitTools];
 
 const protocolVersion = '2026-07-28';
-const release = '0.7.0';
+const release = '0.8.0';
 const onlineWindow = 40_000;
 const argumentLimit = 96_000;
 const resultLimit = 1_600_000;

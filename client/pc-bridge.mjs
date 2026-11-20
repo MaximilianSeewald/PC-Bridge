@@ -1,6 +1,7 @@
 import { captureUnityGameView, createUnityMcp, readUnityActiveScene, unityToolNames } from './unity-mcp.mjs';
 import { createProjectGit, gitToolNames } from './project-git.mjs';
 import { createUnityImageImporter } from './unity-image-import.mjs';
+import { blenderToolNames, createBlenderMcp } from './blender-mcp.mjs';
 import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
@@ -37,7 +38,7 @@ export function parsePairingCode(input) {
   return { ...data, siteOrigin: chatGptSiteOrigin(data.siteOrigin) };
 }
 
-export async function runJob(job, callUnity, callGit, readUnityResource, importImage) {
+export async function runJob(job, callUnity, callGit, readUnityResource, importImage, callBlender) {
   if (!job || !Number.isFinite(job.expires_at)) return { ok: false, error: 'invalid_job' };
   if (Date.now() >= job.expires_at) return { ok: false, error: 'expired' };
 
@@ -52,11 +53,17 @@ export async function runJob(job, callUnity, callGit, readUnityResource, importI
     const isGit = gitToolNames.has(job.tool);
     const isGameView = job.tool === 'unity_game_view';
     const isImageImport = job.tool === 'unity_import_chat_image';
-    if ((!isGit && !isGameView && !isImageImport && !unityToolNames.has(job.tool)) || !job.arguments || typeof job.arguments !== 'object' ||
+    const isBlender = blenderToolNames.has(job.tool);
+    if ((!isGit && !isGameView && !isImageImport && !isBlender && !unityToolNames.has(job.tool)) || !job.arguments || typeof job.arguments !== 'object' ||
         Array.isArray(job.arguments)) return { ok: false, error: 'invalid_job' };
     const remaining = job.expires_at - Date.now() - 1_000;
     if (remaining <= 0) return { ok: false, error: 'expired' };
     const timeout = Math.min(29_000, remaining);
+    if (isBlender) {
+      if (Object.keys(job.arguments).length) return { ok: false, error: 'invalid_job' };
+      const output = await callBlender(job.tool, AbortSignal.timeout(timeout));
+      return { ok: true, output };
+    }
     if (isGameView) {
       if (Object.keys(job.arguments).length) return { ok: false, error: 'invalid_job' };
       const output = await captureUnityGameView(callUnity, readUnityResource, AbortSignal.timeout(timeout));
@@ -119,11 +126,12 @@ async function runClient(ask) {
   const config = await readProjectConfig();
   const git = createProjectGit(config, unity);
   const importImage = createUnityImageImporter(unity, config?.projectPath);
-  console.log('Unity MCP über 127.0.0.1:8080. Strg+C beendet die Verbindung.');
-  await pollSite(deviceClient(credentials.siteOrigin, credentials), unity.callTool, git, unity.readResource, importImage);
+  const callBlender = createBlenderMcp();
+  console.log('Unity MCP über 127.0.0.1:8080, Blender-Add-on über 127.0.0.1:9876. Strg+C beendet die Verbindung.');
+  await pollSite(deviceClient(credentials.siteOrigin, credentials), unity.callTool, git, unity.readResource, importImage, callBlender);
 }
 
-async function pollSite(call, callUnity, callGit, readUnityResource, importImage) {
+async function pollSite(call, callUnity, callGit, readUnityResource, importImage, callBlender) {
   let online = false;
   while (true) {
     try {
@@ -131,7 +139,7 @@ async function pollSite(call, callUnity, callGit, readUnityResource, importImage
       if (!online) console.log('Verbunden. Rufe jetzt @PC-Bridge in ChatGPT Work auf.');
       online = true;
       if (job) {
-        const result = await runJob(job, callUnity, callGit, readUnityResource, importImage);
+        const result = await runJob(job, callUnity, callGit, readUnityResource, importImage, callBlender);
         try {
           await call('/api/device/result', { id: job.id, result });
           console.log(result.ok && !result.output?.isError

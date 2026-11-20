@@ -83,6 +83,24 @@ Pfad, damit du den Unity-Import prüfen kannst. Für Chatbilder, die deine
 Chat-Ansicht nicht direkt als Datei an ein Tool übergibt, hänge das Bild
 als PNG- oder JPEG-Datei an.
 
+## Blender MCP verbinden
+
+1. Installiere [uv](https://docs.astral.sh/uv/getting-started/installation/) und
+   prüfe in einem neuen Terminal mit `uvx --version`, dass es im PATH liegt.
+2. Lade `addon.py` aus dem [MCP-for-Blender-Repository](https://github.com/ahujasid/mcp-for-blender).
+   Wähle in Blender **Edit → Preferences → Add-ons → Install from Disk**,
+   installiere die Datei und aktiviere das Add-on. Öffne die Seitenleiste
+   der 3D-Ansicht mit **N** und verbinde das Add-on im Tab **MCP for Blender**
+   beziehungsweise **Merge Labs**, je nach Add-on-Version.
+   PC-Bridge erwartet den Standardport `9876` auf demselben Rechner.
+3. Starte das Client-Paket und kopple es wie oben. Im Work-Chat kannst du mit
+   `blender_scene_info` die geöffnete Szene lesen und mit `blender_viewport`
+   ein aktuelles PNG in der Solid-Darstellung abrufen.
+
+Der Client startet den lokalen MCP-Prozess per `uvx` beim jeweiligen
+Blender-Aufruf. Der erste Aufruf kann das Paket und seine Abhängigkeiten
+herunterladen. Öffne für die Bildabfrage einen 3D-Viewport in Blender.
+
 ## Testmodus für Unity-Multiplayer unter Windows
 
 Starte `PC-Bridge-Testmodus.cmd` per Doppelklick, wenn Windows bei
