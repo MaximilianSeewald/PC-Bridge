@@ -34,6 +34,31 @@ Gerätezugang. Behandle den Kopplungscode wie ein Passwort. Wenn ein
 Schreibaufruf wegen eines Timeouts endet, prüfe den Zustand im Editor
 vor einem erneuten Aufruf.
 
+## Testmodus für Unity-Multiplayer unter Windows
+
+Starte `PC-Bridge-Testmodus.cmd` per Doppelklick, wenn Windows bei
+automatisch erzeugten Unity-Testprogrammen wiederholt nach Netzwerkzugriff
+fragt. Bestätige einmal die Windows-Adminabfrage für den Firewall-Helfer.
+PC-Bridge nutzt danach denselben Kopplungsablauf wie mit `PC-Bridge.cmd`.
+
+Der Helfer setzt `NotifyOnListen` für das private Profil während dieser
+Sitzung auf `False`. Das betrifft die Benachrichtigungen für alle
+Programme im privaten Profil. Die Firewall prüft die Verbindungen nach
+ihren vorhandenen Regeln. Unity, MCP und der Windows-Client laufen mit
+den normalen Benutzerrechten. `PC-Bridge.cmd` ist der reguläre Start
+ohne Änderung der Windows-Einstellung.
+
+Beim Beenden über Strg+C oder Schließen des Client-Fensters stellt der
+separate Helfer die Einstellung wieder her. Waren die Benachrichtigungen
+schon ausgeschaltet, bleiben sie ausgeschaltet. Endet der Helfer selbst
+abrupt, etwa bei einem Stromausfall, holt der nächste Start im Testmodus
+die ausstehende Wiederherstellung nach. Bei Bedarf kannst du sie sofort
+in einer PowerShell als Administrator einschalten:
+
+```powershell
+Set-NetFirewallProfile -Profile Private -NotifyOnListen True
+```
+
 ## Gemeinsamer Abnahmelauf
 
 Öffne eine leere Unity-Testszene. Wähle das Site-Plugin in ChatGPT Work
