@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -8,6 +11,7 @@ import { test } from 'node:test';
 import worker from '../worker/index.js';
 import { deviceClient, parsePairingCode, runJob } from '../client/pc-bridge.mjs';
 import { createUnityMcp } from '../client/unity-mcp.mjs';
+import { createUnityImageImporter } from '../client/unity-image-import.mjs';
 import catalog from '../client/unity-tools.json' with { type: 'json' };
 import gitTools from '../client/git-tools.json' with { type: 'json' };
 
@@ -76,8 +80,15 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   assert.deepEqual(discovery.result.supportedVersions, ['2026-07-28']);
   const list = await mcp('tools/list', {}, {});
   const actual = list.result.tools;
-  assert.deepEqual(actual.map(tool => tool.name), ['pc_ping', 'unity_active_scene', 'unity_game_view', ...catalog.tools.map(tool => tool.name), ...gitTools.map(tool => tool.name)]);
-  assert.deepEqual(actual.slice(3).map(tool => tool.inputSchema), [...catalog.tools, ...gitTools].map(tool => tool.inputSchema));
+  assert.deepEqual(actual.map(tool => tool.name), ['pc_ping', 'unity_active_scene', 'unity_game_view', 'unity_import_chat_image', ...catalog.tools.map(tool => tool.name), ...gitTools.map(tool => tool.name)]);
+  assert.deepEqual(actual.slice(4).map(tool => tool.inputSchema), [...catalog.tools, ...gitTools].map(tool => tool.inputSchema));
+  const imageImport = actual.find(tool => tool.name === 'unity_import_chat_image');
+  assert.deepEqual(imageImport._meta, { 'openai/fileParams': ['file'] });
+  assert.deepEqual(imageImport.inputSchema.properties.file.required, ['download_url', 'file_id']);
+  assert.equal(imageImport.annotations.readOnlyHint, false);
+  assert.equal((await mcp('tools/call', {
+    name: imageImport.name, arguments: { file: 'chat_upload://image_0', assetName: 'Schott' },
+  })).error.code, -32602);
   assert.equal(actual.find(tool => tool.name === 'manage_gameobject').annotations.readOnlyHint, false);
   assert.equal(actual.find(tool => tool.name === 'manage_gameobject').annotations.destructiveHint, true);
   assert.equal((await mcp('tools/call', { name: 'pc_ping' }, {})).result.isError, true);
@@ -100,7 +111,7 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   assert.match((await mcp('tools/call', { name: 'pc_ping' })).result.content[0].text, /kein PC gekoppelt/);
 });
 
-async function roundTrip(mcp, device, name, args, callUnity, callGit, readUnityResource) {
+async function roundTrip(mcp, device, name, args, callUnity, callGit, readUnityResource, importImage, expectedArgs = args) {
   const pending = mcp('tools/call', { name, arguments: args });
   let job;
   for (let attempt = 0; attempt < 30 && !job; attempt += 1) {
@@ -108,13 +119,13 @@ async function roundTrip(mcp, device, name, args, callUnity, callGit, readUnityR
     if (!job) await delay(15);
   }
   assert.ok(job);
-  assert.deepEqual(job.arguments, args);
+  assert.deepEqual(job.arguments, expectedArgs);
   assert.deepEqual(await device('/api/device/poll', {}), { job: null });
   if (name === 'pc_ping') {
     await assert.rejects(device('/api/device/result', { id: job.id, result: { ok: true, challenge: 'wrong' } }),
       { status: 400 });
   }
-  const result = await runJob(job, callUnity, callGit, readUnityResource);
+  const result = await runJob(job, callUnity, callGit, readUnityResource, importImage);
   assert.deepEqual(await device('/api/device/result', { id: job.id, result }), { accepted: true });
   return { job, reply: (await pending).result };
 }
@@ -304,4 +315,85 @@ test('Git actions and exact commit inputs round-trip through the private relay',
     return output;
   });
   assert.deepEqual(reply, output);
+});
+
+
+test('import a ChatGPT file reference into the local Unity project as a sprite', async (t) => {
+  const { mcp, pair } = prepareBridge(t);
+  const device = await pair();
+  await device('/api/device/poll', {});
+  const root = await mkdtemp(join(tmpdir(), 'pc-bridge-image-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const folder of ['Assets', 'Packages', 'ProjectSettings']) await mkdir(join(root, folder));
+  await writeFile(join(root, 'Packages/manifest.json'), '{}');
+  await writeFile(join(root, 'ProjectSettings/ProjectVersion.txt'), 'm_EditorVersion: 6000.6.10f1');
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jgZkAAAAASUVORK5CYII=', 'base64');
+  const path = 'Assets/Art/ChatImports/Schott.png';
+  const guid = 'be'.repeat(16);
+  const calls = [];
+  const downloads = [];
+  let playing = false;
+  const unity = {
+    async readResource(uri) {
+      if (uri === 'mcpforunity://project/info') return { success: true, data: { projectRoot: root } };
+      assert.equal(uri, 'mcpforunity://editor/state');
+      return { success: true, data: { editor: { play_mode: { is_playing: playing } } } };
+    },
+    async callTool(name, args) {
+      calls.push({ name, args });
+      assert.deepEqual(await readFile(join(root, path)), png);
+      return { structuredContent: { success: true, data: { guid } } };
+    },
+  };
+  const file = {
+    download_url: 'https://files.oaiusercontent.com/file-test?fake-signature=1',
+    file_id: 'file-test',
+    file_name: '../../wrong-target.exe',
+    mime_type: 'image/png',
+  };
+  const verifyDownload = async (url, options) => {
+    assert.equal(options.credentials, 'omit');
+    assert.equal(options.redirect, 'manual');
+    downloads.push(url.hostname);
+    if (url.hostname === 'files.oaiusercontent.com') {
+      return Response.redirect('https://oaisdmntprtest.blob.core.windows.net/asset.png');
+    }
+    assert.equal(url.hostname, 'oaisdmntprtest.blob.core.windows.net');
+    return new Response(png);
+  };
+  const importer = createUnityImageImporter(unity, undefined, verifyDownload);
+  const args = { file, assetName: 'Schott', pixelsPerUnit: 128 };
+  const expectedArgs = { ...args, file: { download_url: file.download_url } };
+  const { reply } = await roundTrip(mcp, device, 'unity_import_chat_image', args,
+    null, null, null, importer, expectedArgs);
+  assert.equal(reply.isError, false);
+  assert.deepEqual(reply.structuredContent, { path, guid, width: 1, height: 1, pixelsPerUnit: 128, importedAs: 'Sprite' });
+  assert.deepEqual(downloads, ['files.oaiusercontent.com', 'oaisdmntprtest.blob.core.windows.net']);
+  assert.deepEqual(calls, [
+    { name: 'manage_asset', args: { action: 'import', path } },
+    { name: 'manage_texture', args: {
+      action: 'set_import_settings', path, as_sprite: { pixels_per_unit: 128 },
+    } },
+  ]);
+  assert.deepEqual(await readFile(join(root, path)), png);
+
+  const signal = AbortSignal.timeout(5_000);
+  const duplicate = await importer(expectedArgs, signal);
+  assert.equal(duplicate.isError, true);
+  assert.match(duplicate.structuredContent.error, /bereits vergeben/);
+  assert.deepEqual(await readFile(join(root, path)), png);
+  const unsafe = await importer({ ...expectedArgs, file: { download_url: 'http://127.0.0.1:8080/mcp' } }, signal);
+  assert.match(unsafe.structuredContent.error, /Downloadverweis/);
+  playing = true;
+  const refused = await importer(expectedArgs, signal);
+  assert.match(refused.structuredContent.error, /Play Mode/);
+  playing = false;
+  const wrongProject = createUnityImageImporter(unity, join(root, 'Assets'), verifyDownload);
+  assert.match((await wrongProject(expectedArgs, signal)).structuredContent.error, /stimmt nicht/);
+  if (process.platform !== 'win32') {
+    await rm(join(root, 'Assets/Art/ChatImports'), { recursive: true });
+    await symlink(join(root, 'Packages'), join(root, 'Assets/Art/ChatImports'));
+    assert.match((await importer(expectedArgs, signal)).structuredContent.error, /symbolischen Link/);
+  }
+  assert.equal(calls.length, 2);
 });

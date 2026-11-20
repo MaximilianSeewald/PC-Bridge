@@ -1,5 +1,6 @@
 import { captureUnityGameView, createUnityMcp, readUnityActiveScene, unityToolNames } from './unity-mcp.mjs';
 import { createProjectGit, gitToolNames } from './project-git.mjs';
+import { createUnityImageImporter } from './unity-image-import.mjs';
 import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
@@ -36,7 +37,7 @@ export function parsePairingCode(input) {
   return { ...data, siteOrigin: chatGptSiteOrigin(data.siteOrigin) };
 }
 
-export async function runJob(job, callUnity, callGit, readUnityResource) {
+export async function runJob(job, callUnity, callGit, readUnityResource, importImage) {
   if (!job || !Number.isFinite(job.expires_at)) return { ok: false, error: 'invalid_job' };
   if (Date.now() >= job.expires_at) return { ok: false, error: 'expired' };
 
@@ -50,7 +51,8 @@ export async function runJob(job, callUnity, callGit, readUnityResource) {
     if (job.tool === 'unity_active_scene') return await readUnityActiveScene(callUnity);
     const isGit = gitToolNames.has(job.tool);
     const isGameView = job.tool === 'unity_game_view';
-    if ((!isGit && !isGameView && !unityToolNames.has(job.tool)) || !job.arguments || typeof job.arguments !== 'object' ||
+    const isImageImport = job.tool === 'unity_import_chat_image';
+    if ((!isGit && !isGameView && !isImageImport && !unityToolNames.has(job.tool)) || !job.arguments || typeof job.arguments !== 'object' ||
         Array.isArray(job.arguments)) return { ok: false, error: 'invalid_job' };
     const remaining = job.expires_at - Date.now() - 1_000;
     if (remaining <= 0) return { ok: false, error: 'expired' };
@@ -58,6 +60,10 @@ export async function runJob(job, callUnity, callGit, readUnityResource) {
     if (isGameView) {
       if (Object.keys(job.arguments).length) return { ok: false, error: 'invalid_job' };
       const output = await captureUnityGameView(callUnity, readUnityResource, AbortSignal.timeout(timeout));
+      return { ok: true, output };
+    }
+    if (isImageImport) {
+      const output = await importImage(job.arguments, AbortSignal.timeout(timeout));
       return { ok: true, output };
     }
     const output = isGit
@@ -94,7 +100,7 @@ export function deviceClient(origin, credentials, fetchImpl = fetch) {
   };
 }
 
-async function readGitConfig() {
+async function readProjectConfig() {
   const path = new URL('./pc-bridge.config.json', import.meta.url);
   try {
     return JSON.parse((await readFile(path, 'utf8')).replace(/^\uFEFF/, ''));
@@ -110,12 +116,14 @@ async function runClient(ask) {
   const credentials = parsePairingCode(pairingCode);
   console.log(`Private Site: ${credentials.siteOrigin}`);
   const unity = createUnityMcp();
-  const git = createProjectGit(await readGitConfig(), unity);
+  const config = await readProjectConfig();
+  const git = createProjectGit(config, unity);
+  const importImage = createUnityImageImporter(unity, config?.projectPath);
   console.log('Unity MCP über 127.0.0.1:8080. Strg+C beendet die Verbindung.');
-  await pollSite(deviceClient(credentials.siteOrigin, credentials), unity.callTool, git, unity.readResource);
+  await pollSite(deviceClient(credentials.siteOrigin, credentials), unity.callTool, git, unity.readResource, importImage);
 }
 
-async function pollSite(call, callUnity, callGit, readUnityResource) {
+async function pollSite(call, callUnity, callGit, readUnityResource, importImage) {
   let online = false;
   while (true) {
     try {
@@ -123,7 +131,7 @@ async function pollSite(call, callUnity, callGit, readUnityResource) {
       if (!online) console.log('Verbunden. Rufe jetzt @PC-Bridge in ChatGPT Work auf.');
       online = true;
       if (job) {
-        const result = await runJob(job, callUnity, callGit, readUnityResource);
+        const result = await runJob(job, callUnity, callGit, readUnityResource, importImage);
         try {
           await call('/api/device/result', { id: job.id, result });
           console.log(result.ok && !result.output?.isError

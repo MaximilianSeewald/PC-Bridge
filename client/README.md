@@ -60,6 +60,29 @@ verbunden ist. Ein separat gestarteter Standalone-Player oder dessen
 Fenster erfordert eine eigene Capture-Anbindung. Unity speichert die
 lokalen Kopien unter `Temp/PC-Bridge-Captures`.
 
+## Chatbilder als Sprite importieren
+
+1. Öffne das Zielprojekt im lokalen Unity-Editor und beende den Play Mode.
+   Wenn ein Projektpfad in `pc-bridge.config.json` gesetzt ist, muss er
+   zum geöffneten Projekt passen.
+2. Wähle im Work-Chat das PC-Bridge-Plugin und gib an, welches Bild du
+   importieren willst. Verwende ein im Chat ausgewähltes Bild als Datei.
+   Beispielprompt:
+
+   > Importiere das angehängte Bild mit `unity_import_chat_image` als
+   > `Pumpenraum_Schott` in mein geöffnetes Unity-Projekt.
+
+3. Das Tool legt das Bild unter `Assets/Art/ChatImports/` ab und importiert
+   es als einzelnes Sprite. Es meldet den Pfad und die Unity-GUID.
+   Für einen abweichenden Maßstab gib `pixelsPerUnit` an. Standard sind 100.
+
+Der Import akzeptiert PNG und JPEG bis 12 MiB, 8192 Pixel je Seite und
+32 Megapixel. Ein bereits belegter Dateiname bleibt erhalten. Wenn der
+Import nach dem Schreiben scheitert, meldet das Tool den vorhandenen
+Pfad, damit du den Unity-Import prüfen kannst. Für Chatbilder, die deine
+Chat-Ansicht nicht direkt als Datei an ein Tool übergibt, hänge das Bild
+als PNG- oder JPEG-Datei an.
+
 ## Testmodus für Unity-Multiplayer unter Windows
 
 Starte `PC-Bridge-Testmodus.cmd` per Doppelklick, wenn Windows bei
