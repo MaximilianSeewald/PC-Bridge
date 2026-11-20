@@ -1,21 +1,22 @@
 # PC-Bridge
 
 PC-Bridge verbindet einen ChatGPT-Work-Chat im Browser mit einem lokalen
-Windows- oder Linux-PC und übergibt Unity-Aufrufe an den lokalen MCP-Server.
+Windows- oder Linux-PC und übergibt Aufrufe an Unity MCP oder Blender MCP.
 
 - `pc_ping` sendet einen frischen Prüfwert an den Windows-Client und meldet dessen Antwort.
 - `unity_active_scene` liest die aktuell im lokalen Unity-Editor geöffnete
   Szene und zeigt ihren Speicherstatus. [Unity einrichten](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#pc-bridge-unter-windows-und-linux)
 - `unity_game_view` liefert ein aktuelles PNG der Game View im Play Mode.
 - `unity_import_chat_image` übernimmt ein PNG oder JPEG aus dem Chat als Sprite in Unity.
+- `blender_scene_info` und `blender_viewport` liefern Szenendaten und ein PNG aus dem lokalen Blender. Die Einrichtung steht in der [Client-Anleitung](client/README.md#blender-mcp-verbinden).
 - Der Katalog spiegelt die integrierten Werkzeuge von MCP for Unity
   v10.0.0 mitsamt ihren Parameterschemas. Der Client startet
   die Unity-Anbindung automatisch beim ersten Unity-Aufruf.
 
 Die private ChatGPT Site hostet den Web-MCP-Endpunkt und die Auftragswarteschlange
-in D1. Der Client holt Aufträge per HTTPS ab und übergibt sie
-an den lokalen Unity-MCP-Server. So laufen auch Änderungen im lokalen
-Editor. Die private Site und die Gerätekopplung regeln den Zugriff.
+in D1. Der Client holt Aufträge per HTTPS ab und leitet sie an den
+passenden lokalen MCP-Server weiter. So laufen auch Unity-Änderungen im
+lokalen Editor. Die private Site und die Gerätekopplung regeln den Zugriff.
 Die `project_git_*`-Werkzeuge verwenden Git direkt im konfigurierten
 Unity-Checkout. [Git für ContinueWork einrichten](https://github.com/MaximilianSeewald/PC-Bridge/tree/main/client#git-für-continuework-einrichten)
 
@@ -86,7 +87,7 @@ Für den Client brauchst du Node.js 22 oder neuer.
 Der Kopplungscode enthält die Adresse der Site und die Zugangsdaten für
 den PC. Kopiere ihn direkt von deiner privaten Site in den Client. Über
 **Kopplung aufheben** trennst du den bisherigen Client. Der Client
-überträgt den Prüfwert oder die Ausgabe des angeforderten Unity-Werkzeugs.
+überträgt den Prüfwert oder die Ausgabe des angeforderten Werkzeugs.
 
 ## Bestehende private Site aktualisieren
 
