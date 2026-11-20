@@ -2,6 +2,7 @@ import { captureUnityGameView, createUnityMcp, readUnityActiveScene, unityToolNa
 import { createProjectGit, gitToolNames } from './project-git.mjs';
 import { createUnityImageImporter } from './unity-image-import.mjs';
 import { blenderToolNames, createBlenderMcp } from './blender-mcp.mjs';
+import { createBlenderFbxToUnity } from './blender-fbx-to-unity.mjs';
 import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
@@ -53,15 +54,14 @@ export async function runJob(job, callUnity, callGit, readUnityResource, importI
     const isGit = gitToolNames.has(job.tool);
     const isGameView = job.tool === 'unity_game_view';
     const isImageImport = job.tool === 'unity_import_chat_image';
-    const isBlender = blenderToolNames.has(job.tool);
+    const isBlender = blenderToolNames.has(job.tool) || job.tool === 'blender_fbx_to_unity';
     if ((!isGit && !isGameView && !isImageImport && !isBlender && !unityToolNames.has(job.tool)) || !job.arguments || typeof job.arguments !== 'object' ||
         Array.isArray(job.arguments)) return { ok: false, error: 'invalid_job' };
     const remaining = job.expires_at - Date.now() - 1_000;
     if (remaining <= 0) return { ok: false, error: 'expired' };
     const timeout = Math.min(29_000, remaining);
     if (isBlender) {
-      if (Object.keys(job.arguments).length) return { ok: false, error: 'invalid_job' };
-      const output = await callBlender(job.tool, AbortSignal.timeout(timeout));
+      const output = await callBlender(job.tool, job.arguments, AbortSignal.timeout(timeout));
       return { ok: true, output };
     }
     if (isGameView) {
@@ -127,8 +127,12 @@ async function runClient(ask) {
   const git = createProjectGit(config, unity);
   const importImage = createUnityImageImporter(unity, config?.projectPath);
   const callBlender = createBlenderMcp();
+  const transferBlender = createBlenderFbxToUnity(unity, config?.projectPath, callBlender);
+  const blender = (name, args, signal) => name === 'blender_fbx_to_unity'
+    ? transferBlender(args, signal)
+    : callBlender(name, args, signal);
   console.log('Unity MCP über 127.0.0.1:8080, Blender-Add-on über 127.0.0.1:9876. Strg+C beendet die Verbindung.');
-  await pollSite(deviceClient(credentials.siteOrigin, credentials), unity.callTool, git, unity.readResource, importImage, callBlender);
+  await pollSite(deviceClient(credentials.siteOrigin, credentials), unity.callTool, git, unity.readResource, importImage, blender);
 }
 
 async function pollSite(call, callUnity, callGit, readUnityResource, importImage, callBlender) {

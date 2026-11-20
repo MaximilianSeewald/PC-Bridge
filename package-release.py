@@ -11,6 +11,7 @@ CLIENT_FILES = {
     for name in (
         "README.md", "pc-bridge.mjs", "unity-mcp.mjs", "unity-tools.json",
         "project-git.mjs", "git-tools.json", "unity-image-import.mjs", "blender-mcp.mjs",
+        "unity-asset-import.mjs", "blender-fbx-to-unity.mjs",
     )
 }
 PACKAGES = {

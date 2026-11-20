@@ -64,6 +64,43 @@ const imageImportTool = {
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
   _meta: { 'openai/fileParams': ['file'] },
 };
+const blenderWriteTools = [
+  {
+    name: 'blender_execute_code',
+    title: 'Geöffnete Blender-Szene bearbeiten',
+    description: 'Führt Blender-Python im verbundenen Editor mit dem Safe Mode von MCP for Blender aus. Für Modelle, Materialien, UVs, Rigging und Animationen. Gib ein kurzes Skript an und gib Ergebnisse mit print aus. Speichere die .blend-Datei auf ausdrücklichen Wunsch. Verwende für die Übergabe an Unity blender_fbx_to_unity.',
+    inputSchema: {
+      type: 'object',
+      properties: { code: { type: 'string', minLength: 1, maxLength: 16000 } },
+      required: ['code'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
+  },
+  {
+    name: 'blender_fbx_to_unity',
+    title: 'Blender-Objekte als Unity-Modell importieren',
+    description: 'Exportiert die benannten oder aktuell ausgewählten Blender-Objekte als FBX und importiert sie in das aktive lokale Unity-Projekt. Akzeptiert Meshes, Armatures und Empties. Gibt den Unity-Assetpfad und die GUID zurück.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        assetName: {
+          type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$',
+          description: 'Neuer Name ohne Dateiendung. Ein bestehendes Asset bleibt erhalten.',
+        },
+        objectNames: {
+          type: 'array', maxItems: 64, uniqueItems: true,
+          items: { type: 'string', minLength: 1, maxLength: 255 },
+          description: 'Exakte Namen im aktiven Blender View Layer. Weglassen, um die aktuelle Auswahl zu exportieren.',
+        },
+        animations: { type: 'boolean', default: false, description: 'Bäckt Animationen mit ein.' },
+      },
+      required: ['assetName'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  },
+];
 const externalTools = new Set([
   'batch_execute', 'execute_code', 'execute_custom_tool', 'execute_menu_item',
   'generate_image', 'generate_model', 'import_model', 'manage_packages', 'unity_docs',
@@ -82,12 +119,12 @@ const unityTools = catalog.tools.map(tool => {
 });
 const forwardedToolNames = new Set([
   'unity_game_view', 'blender_scene_info', 'blender_viewport', imageImportTool.name,
-  ...unityTools.map(tool => tool.name), ...gitTools.map(tool => tool.name),
+  ...blenderWriteTools.map(tool => tool.name), ...unityTools.map(tool => tool.name), ...gitTools.map(tool => tool.name),
 ]);
-const tools = [...bridgeTools, imageImportTool, ...unityTools, ...gitTools];
+const tools = [...bridgeTools, imageImportTool, ...blenderWriteTools, ...unityTools, ...gitTools];
 
 const protocolVersion = '2026-07-28';
-const release = '0.8.0';
+const release = '0.9.0';
 const onlineWindow = 40_000;
 const argumentLimit = 96_000;
 const resultLimit = 1_600_000;

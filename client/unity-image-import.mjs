@@ -1,12 +1,12 @@
-import { randomUUID } from 'node:crypto';
-import { link, lstat, mkdir, realpath, unlink, writeFile } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { toolPayload } from './unity-mcp.mjs';
+import {
+  importFolder, publishNewAsset, requireEditMode, unityImportGuid, unityProjectRoot, validAssetName,
+} from './unity-asset-import.mjs';
 
 const maxImageBytes = 12 * 1024 * 1024;
 const maxImageDimension = 8192;
-const assetNamePattern = /^[a-z0-9][a-z0-9_-]{0,79}$/i;
-const windowsDeviceName = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
 const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 
 function chatFileUrl(value) {
@@ -77,31 +77,6 @@ function imageHeader(bytes) {
   throw new Error('Die Datei ist kein unterstütztes PNG oder JPEG.');
 }
 
-async function inspectPath(path) {
-  return lstat(path).catch(error => {
-    if (error.code === 'ENOENT') return null;
-    throw error;
-  });
-}
-
-async function importFolder(root) {
-  let folder = root;
-  for (const name of ['Assets', 'Art', 'ChatImports']) {
-    folder = join(folder, name);
-    let info = await inspectPath(folder);
-    if (!info && name !== 'Assets') {
-      await mkdir(folder).catch(error => {
-        if (error.code !== 'EEXIST') throw error;
-      });
-      info = await lstat(folder);
-    }
-    if (!info?.isDirectory() || await inspectPath(folder + '.meta').then(meta => meta?.isSymbolicLink())) {
-      throw new Error('Der Unity-Importordner ist ungültig oder enthält einen symbolischen Link.');
-    }
-  }
-  return folder;
-}
-
 function result(data, isError = false) {
   return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data, isError };
 }
@@ -112,32 +87,15 @@ export function createUnityImageImporter(unity, configuredPath, fetchImpl = fetc
     let saved = false;
     try {
       const { file, assetName, pixelsPerUnit = 100 } = args;
-      if (typeof assetName !== 'string' || !assetNamePattern.test(assetName) || windowsDeviceName.test(assetName)) {
+      if (!validAssetName(assetName)) {
         throw new Error('Gib einen Assetnamen aus Buchstaben, Zahlen, Unterstrichen oder Bindestrichen an.');
       }
       if (!Number.isInteger(pixelsPerUnit) || pixelsPerUnit < 1 || pixelsPerUnit > 1024) {
         throw new Error('Pixels per Unit muss eine ganze Zahl zwischen 1 und 1024 sein.');
       }
 
-      const project = await unity.readResource('mcpforunity://project/info', signal);
-      const currentPath = project?.data?.projectRoot;
-      if (project?.success !== true || typeof currentPath !== 'string' || !isAbsolute(currentPath)) {
-        throw new Error('Unity MCP meldet kein aktives lokales Unity-Projekt.');
-      }
-      const root = await realpath(currentPath);
-      if (configuredPath !== undefined &&
-          (typeof configuredPath !== 'string' || !isAbsolute(configuredPath) || root !== await realpath(configuredPath))) {
-        throw new Error('Das aktive Unity-Projekt stimmt nicht mit pc-bridge.config.json überein.');
-      }
-      if (!(await inspectPath(join(root, 'Packages', 'manifest.json')))?.isFile() ||
-          !(await inspectPath(join(root, 'ProjectSettings', 'ProjectVersion.txt')))?.isFile()) {
-        throw new Error('Unity MCP meldet keinen gültigen Unity-Projektordner.');
-      }
-      const state = await unity.readResource('mcpforunity://editor/state', signal);
-      const play = state?.data?.editor?.play_mode;
-      if (state?.success !== true || play?.is_playing !== false || play.is_changing === true) {
-        throw new Error('Beende den Play Mode in Unity vor dem Sprite-Import.');
-      }
+      const root = await unityProjectRoot(unity, configuredPath, signal);
+      await requireEditMode(unity, signal, 'Sprite-Import');
 
       const bytes = await downloadImage(file?.download_url, signal, fetchImpl);
       const { extension, width, height } = imageHeader(bytes);
@@ -145,27 +103,15 @@ export function createUnityImageImporter(unity, configuredPath, fetchImpl = fetc
         throw new Error('Das Bild ist zu groß. Erlaubt sind höchstens 8192 Pixel pro Seite und 32 Megapixel.');
       }
 
-      const folder = await importFolder(root);
+      const folder = await importFolder(root, ['Assets', 'Art', 'ChatImports']);
       const fileName = `${assetName}.${extension}`;
       const destination = join(folder, fileName);
       assetPath = `Assets/Art/ChatImports/${fileName}`;
-      if (await inspectPath(destination) || await inspectPath(destination + '.meta')) {
-        throw Object.assign(new Error('Der Assetname ist bereits vergeben. Wähle einen neuen Namen.'), { code: 'EEXIST' });
-      }
-      const staging = join(folder, `.pc-bridge-${randomUUID()}.tmp`);
-      try {
-        await writeFile(staging, bytes, { flag: 'wx', signal });
-        signal.throwIfAborted();
-        await link(staging, destination);
-        saved = true;
-      } finally {
-        await unlink(staging).catch(() => {});
-      }
+      await publishNewAsset(destination, signal, staging => writeFile(staging, bytes, { flag: 'wx', signal }));
+      saved = true;
 
-      const imported = await unity.callTool('manage_asset', { action: 'import', path: assetPath }, signal);
-      const asset = toolPayload(imported);
-      const guid = asset?.data?.guid;
-      if (imported.isError || asset?.success !== true || typeof guid !== 'string' || !/^[a-f0-9]{32}$/i.test(guid)) {
+      const guid = await unityImportGuid(unity, assetPath, signal);
+      if (!guid) {
         throw new Error('Unity konnte das gespeicherte Bild noch nicht importieren.');
       }
       const sprite = await unity.callTool('manage_texture', {

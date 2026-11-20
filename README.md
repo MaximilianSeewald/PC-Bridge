@@ -9,6 +9,7 @@ Windows- oder Linux-PC und übergibt Aufrufe an Unity MCP oder Blender MCP.
 - `unity_game_view` liefert ein aktuelles PNG der Game View im Play Mode.
 - `unity_import_chat_image` übernimmt ein PNG oder JPEG aus dem Chat als Sprite in Unity.
 - `blender_scene_info` und `blender_viewport` liefern Szenendaten und ein PNG aus dem lokalen Blender. Die Einrichtung steht in der [Client-Anleitung](client/README.md#blender-mcp-verbinden).
+- `blender_execute_code` bearbeitet Modelle, Materialien und Animationen in Blender. `blender_fbx_to_unity` exportiert benannte oder ausgewählte Objekte und importiert das Modell direkt ins aktive Unity-Projekt.
 - Der Katalog spiegelt die integrierten Werkzeuge von MCP for Unity
   v10.0.0 mitsamt ihren Parameterschemas. Der Client startet
   die Unity-Anbindung automatisch beim ersten Unity-Aufruf.
