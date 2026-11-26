@@ -1,7 +1,10 @@
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdtemp, open, rm } from 'node:fs/promises';
+import { copyFile, lstat, mkdtemp, open, rm, readFile, rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { projectFile } from './blender-files.mjs';
+import { toolPayload } from './unity-mcp.mjs';
+import { join, dirname } from 'node:path';
 import {
   importFolder, publishNewAsset, requireEditMode, requireNewAsset, unityImportGuid, unityProjectRoot, validAssetName,
 } from './unity-asset-import.mjs';
@@ -65,13 +68,25 @@ function result(data, isError = false) {
   return { content: [{ type: 'text', text: JSON.stringify(data) }], structuredContent: data, isError };
 }
 
+async function verifyExisting(unity, root, path, guid, signal) {
+  const destination = await projectFile(root,path,'.fbx');
+  const meta = await lstat(destination+'.meta');
+  if(!meta.isFile() || meta.isSymbolicLink()) throw new Error('Ungültige Unity-Metadatei.');
+  const metaBytes=await readFile(destination+'.meta');
+  const actual = metaBytes.toString('utf8').match(/^guid:\s*([a-f0-9]{32})\s*$/mi)?.[1];
+  if(actual?.toLowerCase()!==guid.toLowerCase()) throw new Error('Unity-GUID stimmt nicht überein.');
+  const info=await unity.callTool('manage_asset',{action:'get_info',path,generate_preview:false},signal);
+  const data=toolPayload(info);
+  if(info.isError || data?.success!==true || data.data?.guid?.toLowerCase()!==guid.toLowerCase()) throw new Error('Unity bestätigt die erwartete GUID nicht.');
+  return {destination,metaBytes,stat:await lstat(destination)};
+}
 export function createBlenderFbxToUnity(unity, configuredPath, callBlender) {
   return async (args, signal) => {
     let temporary;
     let savedPath;
     try {
-      const { assetName, objectNames = [], animations = false } = args;
-      if (Object.keys(args).some(key => !['assetName', 'objectNames', 'animations'].includes(key)) || !validAssetName(assetName)) {
+      const { assetName, objectNames = [], animations = false, targetPath, expectedGuid } = args;
+      if (Object.keys(args).some(key => !['assetName', 'objectNames', 'animations', 'targetPath', 'expectedGuid'].includes(key)) || !validAssetName(assetName)) {
         throw new Error('Gib einen neuen Assetnamen ohne Pfad oder Endung an.');
       }
       if (!Array.isArray(objectNames) || objectNames.length > 64 || new Set(objectNames).size !== objectNames.length ||
@@ -82,7 +97,14 @@ export function createBlenderFbxToUnity(unity, configuredPath, callBlender) {
       const root = await unityProjectRoot(unity, configuredPath, signal);
       await requireEditMode(unity, signal, 'FBX-Import');
       const fileName = `${assetName}.fbx`;
-      await requireNewAsset(join(root, ...folderParts, fileName));
+      const updating = expectedGuid !== undefined;
+      if ((updating && (typeof expectedGuid !== 'string' || !/^[a-f0-9]{32}$/i.test(expectedGuid))) ||
+          (targetPath !== undefined && (!updating || typeof targetPath !== 'string' || !targetPath.startsWith('Assets/') || targetPath.split('/').at(-1)!==fileName))) {
+        throw new Error('Aktualisierung erfordert erwartete GUID und einen passenden FBX-Pfad unter Assets.');
+      }
+      const path = targetPath ?? [...folderParts,fileName].join('/');
+      const old = updating ? await verifyExisting(unity,root,path,expectedGuid,signal) : null;
+      if (!updating) await requireNewAsset(join(root, ...folderParts, fileName));
 
       temporary = await mkdtemp(join(tmpdir(), 'pc-bridge-fbx-'));
       const source = join(temporary, 'model.fbx');
@@ -101,13 +123,25 @@ export function createBlenderFbxToUnity(unity, configuredPath, callBlender) {
       }
       await requireEditMode(unity, signal, 'FBX-Import');
       signal.throwIfAborted();
-      const folder = await importFolder(root, folderParts);
-      await publishNewAsset(join(folder, fileName), signal, staging => copyFile(source, staging, constants.COPYFILE_EXCL));
-      savedPath = [...folderParts, fileName].join('/');
+      if (updating) {
+        const now = await verifyExisting(unity,root,path,expectedGuid,signal);
+        if (!old.metaBytes.equals(now.metaBytes) || old.stat.size!==now.stat.size || old.stat.mtimeMs!==now.stat.mtimeMs || old.stat.ino!==now.stat.ino) throw new Error('FBX oder Metadatei wurde während des Exports geändert.');
+        const staging = join(dirname(now.destination),'.pc-bridge-'+randomUUID()+'.tmp');
+        try {
+          await copyFile(source,staging,constants.COPYFILE_EXCL);
+          signal.throwIfAborted();
+          await rename(staging,now.destination);
+        } finally { await rm(staging,{force:true}).catch(()=>{}); }
+      } else {
+        const folder = await importFolder(root, folderParts);
+        await publishNewAsset(join(folder, fileName), signal, staging => copyFile(source, staging, constants.COPYFILE_EXCL));
+      }
+      savedPath = path;
 
       const guid = await unityImportGuid(unity, savedPath, signal);
       if (!guid) throw new Error('Unity hat den Modellimport noch nicht bestätigt.');
-      return result({ path: savedPath, guid, objects, bytes, animations });
+      if (updating && (guid.toLowerCase() !== expectedGuid.toLowerCase() || !old.metaBytes.equals(await readFile(old.destination+'.meta')))) throw new Error('Unity-Metadaten wurden beim Reimport verändert. Prüfe Referenzen.');
+      return result({ path: savedPath, guid, objects, bytes, animations, ...(updating ? {updated:true} : {}) });
     } catch (error) {
       let message = error instanceof Error && !error.code ? error.message : 'Die lokale Blender-Unity-Übergabe ist fehlgeschlagen.';
       if (error?.code === 'EEXIST') message = 'Der Assetname ist bereits vergeben. Wähle einen neuen Namen.';

@@ -80,13 +80,13 @@ const blenderWriteTools = [
   {
     name: 'blender_fbx_to_unity',
     title: 'Blender-Objekte als Unity-Modell importieren',
-    description: 'Exportiert die benannten oder aktuell ausgewählten Blender-Objekte als FBX und importiert sie in das aktive lokale Unity-Projekt. Akzeptiert Meshes, Armatures und Empties. Gibt den Unity-Assetpfad und die GUID zurück.',
+    description: 'Exportiert Blender-Objekte als FBX in Unity. Aktualisiert ein bestehendes FBX nur mit erwarteter GUID; erhält die .meta-Datei. Akzeptiert Meshes, Armatures und Empties. Gibt den Unity-Assetpfad und die GUID zurück.',
     inputSchema: {
       type: 'object',
       properties: {
         assetName: {
           type: 'string', pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$',
-          description: 'Neuer Name ohne Dateiendung. Ein bestehendes Asset bleibt erhalten.',
+          description: 'Name ohne Dateiendung. Ohne expectedGuid wird nur ein neues Asset angelegt.',
         },
         objectNames: {
           type: 'array', maxItems: 64, uniqueItems: true,
@@ -94,12 +94,138 @@ const blenderWriteTools = [
           description: 'Exakte Namen im aktiven Blender View Layer. Weglassen, um die aktuelle Auswahl zu exportieren.',
         },
         animations: { type: 'boolean', default: false, description: 'Bäckt Animationen mit ein.' },
+        targetPath: { type: 'string', maxLength: 512, description: 'Optionaler vorhandener FBX-Pfad unter Assets für Aktualisierungen. Nur mit expectedGuid.' },
+        expectedGuid: { type: 'string', pattern: '^[a-fA-F0-9]{32}$', description: 'Expliziter Aktualisierungsmodus; die vorhandene Unity-GUID muss übereinstimmen.' },
       },
       required: ['assetName'],
       additionalProperties: false,
     },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
   },
+];
+const blenderFileTools = [
+  {
+    "name": "blender_list_files",
+    "title": "Blender-Projektdateien finden",
+    "description": "Listet .blend-Dateien im aktiven Unity-Projekt ohne generierte Ordner oder symbolische Links.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 100
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "blender_file_status",
+    "title": "Aktive Blender-Datei prüfen",
+    "description": "Liefert Projektpfad, ungespeicherte Änderungen und Objektanzahl.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "blender_open_file",
+    "title": "Blender-Datei öffnen",
+    "description": "Öffnet eine vorhandene projektbezogene .blend-Datei. Ungespeicherte Änderungen blockieren den Wechsel.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "blender_new_file",
+    "title": "Leere Blender-Datei anlegen",
+    "description": "Lädt eine leere Szene ohne ungespeicherte Änderungen zu verwerfen. Anschließend blender_save_as verwenden.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "blender_save_file",
+    "title": "Blender-Datei speichern",
+    "description": "Speichert die aktive bereits gespeicherte .blend-Datei im Projekt.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "blender_save_as",
+    "title": "Blender-Datei neu speichern",
+    "description": "Speichert die aktive Szene unter einem neuen projektbezogenen .blend-Pfad. Vorhandene Dateien werden nicht überschrieben.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": false
+    }
+  }
 ];
 const externalTools = new Set([
   'batch_execute', 'execute_code', 'execute_custom_tool', 'execute_menu_item',
@@ -119,12 +245,12 @@ const unityTools = catalog.tools.map(tool => {
 });
 const forwardedToolNames = new Set([
   'unity_game_view', 'blender_scene_info', 'blender_viewport', imageImportTool.name,
-  ...blenderWriteTools.map(tool => tool.name), ...unityTools.map(tool => tool.name), ...gitTools.map(tool => tool.name),
+  ...blenderWriteTools.map(tool => tool.name), ...blenderFileTools.map(tool => tool.name), ...unityTools.map(tool => tool.name), ...gitTools.map(tool => tool.name),
 ]);
-const tools = [...bridgeTools, imageImportTool, ...blenderWriteTools, ...unityTools, ...gitTools];
+const tools = [...bridgeTools, imageImportTool, ...blenderWriteTools, ...blenderFileTools, ...unityTools, ...gitTools];
 
 const protocolVersion = '2026-07-28';
-const release = '0.9.0';
+const release = '0.10.0';
 const onlineWindow = 40_000;
 const argumentLimit = 96_000;
 const resultLimit = 1_600_000;

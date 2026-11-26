@@ -90,7 +90,7 @@ async function callStdio(params, signal, spawnProcess) {
     const initialized = await request('initialize', {
       protocolVersion: '2025-11-25',
       capabilities: {},
-      clientInfo: { name: 'pc-bridge', version: '0.9.0' },
+      clientInfo: { name: 'pc-bridge', version: '0.10.0' },
     });
     if (typeof initialized?.protocolVersion !== 'string' || !initialized.capabilities?.tools) {
       throw new Error('Blender MCP hat keine Werkzeuge gemeldet.');

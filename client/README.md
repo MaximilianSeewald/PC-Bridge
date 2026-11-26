@@ -101,6 +101,21 @@ Der Client startet den lokalen MCP-Prozess per `uvx` beim jeweiligen
 Blender-Aufruf. Der erste Aufruf kann das Paket und seine Abhängigkeiten
 herunterladen. Öffne für die Bildabfrage einen 3D-Viewport in Blender.
 
+### Blender-Quelldateien verwalten
+
+Empfohlener Pfad: `ArtSource/Blender/Modell.blend` (außerhalb von Assets).
+Vorhandene projektbezogene Pfade werden ebenfalls unterstützt.
+- `blender_list_files` findet .blend-Dateien, mit offset/limit für große Projekte.
+- `blender_file_status` prüft die aktive Datei und ungespeicherte Änderungen.
+- `blender_open_file` öffnet einen vorhandenen relativen Pfad.
+- `blender_new_file` lädt eine leere Szene; anschließend `blender_save_as` mit einem freien Pfad.
+- `blender_save_file` speichert die aktive Projektdatei; `blender_save_as` erstellt eine neue.
+Dateiwechsel verwerfen keine Änderungen. Speichere zuerst; automatisch ausgeführte
+Skripte aus geladenen Dateien bleiben deaktiviert. Die Bridge prüft den Dateistatus
+nach dem Wechsel mit einer neuen MCP-Sitzung und wiederholt keine Schreiboperation.
+Generierte Unity-Verzeichnisse, versteckte Ordner und symbolische Links sind ausgeschlossen.
+Blender kann normale .blend1-Sicherungsdateien erzeugen; diese nicht versionieren.
+
 ### Blender-Modelle in Unity verwenden
 
 - `blender_execute_code` verwendet Blender-Python für Modellierung, UVs,
@@ -112,7 +127,7 @@ herunterladen. Öffne für die Bildabfrage einen 3D-Viewport in Blender.
   `assetName` ohne Endung an. Blender muss im Objektmodus sein und Unity
   MCP das Zielprojekt außerhalb des Play Mode geöffnet haben.
 - Der Import landet in `Assets/Art/BlenderImports/<assetName>.fbx`.
-  PC-Bridge meldet die Unity-GUID und ersetzt keine vorhandenen Assets.
+  PC-Bridge meldet die Unity-GUID und ersetzt standardmäßig keine vorhandenen Assets. Mit `expectedGuid` und optional `targetPath` (unter `Assets/`, Dateiname passend zu `assetName`) wird ein bestehendes FBX aktualisiert. Die `.meta`-Datei und GUID werden vor und nach dem Reimport geprüft; geänderte Mesh-Hierarchien können trotzdem Subasset-Referenzen verändern.
   Meshes, Empties und Armatures können gemeinsam exportiert werden. Gib
   für ein Rig das Mesh und die zugehörige Armature an. Mit
   `animations: true` werden Animationen gebacken. Texturdateien und

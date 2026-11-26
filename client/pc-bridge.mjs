@@ -3,6 +3,7 @@ import { createProjectGit, gitToolNames } from './project-git.mjs';
 import { createUnityImageImporter } from './unity-image-import.mjs';
 import { blenderToolNames, createBlenderMcp } from './blender-mcp.mjs';
 import { createBlenderFbxToUnity } from './blender-fbx-to-unity.mjs';
+import { createBlenderFiles, blenderFileToolNames } from './blender-files.mjs';
 import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
@@ -54,7 +55,7 @@ export async function runJob(job, callUnity, callGit, readUnityResource, importI
     const isGit = gitToolNames.has(job.tool);
     const isGameView = job.tool === 'unity_game_view';
     const isImageImport = job.tool === 'unity_import_chat_image';
-    const isBlender = blenderToolNames.has(job.tool) || job.tool === 'blender_fbx_to_unity';
+    const isBlender = blenderToolNames.has(job.tool) || blenderFileToolNames.has(job.tool) || job.tool === 'blender_fbx_to_unity';
     if ((!isGit && !isGameView && !isImageImport && !isBlender && !unityToolNames.has(job.tool)) || !job.arguments || typeof job.arguments !== 'object' ||
         Array.isArray(job.arguments)) return { ok: false, error: 'invalid_job' };
     const remaining = job.expires_at - Date.now() - 1_000;
@@ -128,7 +129,8 @@ async function runClient(ask) {
   const importImage = createUnityImageImporter(unity, config?.projectPath);
   const callBlender = createBlenderMcp();
   const transferBlender = createBlenderFbxToUnity(unity, config?.projectPath, callBlender);
-  const blender = (name, args, signal) => name === 'blender_fbx_to_unity'
+  const blenderFiles = createBlenderFiles(unity, config?.projectPath, callBlender);
+  const blender = (name, args, signal) => blenderFileToolNames.has(name) ? blenderFiles(name,args,signal) : name === 'blender_fbx_to_unity'
     ? transferBlender(args, signal)
     : callBlender(name, args, signal);
   console.log('Unity MCP über 127.0.0.1:8080, Blender-Add-on über 127.0.0.1:9876. Strg+C beendet die Verbindung.');

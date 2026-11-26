@@ -101,7 +101,7 @@ export function createUnityMcp(fetchImpl = fetch) {
     const headers = { Accept: 'application/json, text/event-stream', 'Content-Type': 'application/json' };
     try {
       const { result: init } = await send(headers, signal, 'initialize', {
-        protocolVersion, capabilities: {}, clientInfo: { name: 'pc-bridge', version: '0.9.0' },
+        protocolVersion, capabilities: {}, clientInfo: { name: 'pc-bridge', version: '0.10.0' },
       }, ++nextId);
       if (!supportedVersions.has(init?.protocolVersion) || !init.capabilities?.tools) {
         throw new Error('Dieser Unity-MCP-Server unterstützt die erwarteten Tools nicht.');

@@ -86,9 +86,10 @@ test('MCP discovery, owner authorization and fixed tool arguments', async (t) =>
   assert.deepEqual(actual.map(tool => tool.name), [
     'pc_ping', 'unity_active_scene', 'unity_game_view', 'blender_scene_info', 'blender_viewport',
     'unity_import_chat_image', 'blender_execute_code', 'blender_fbx_to_unity',
+    'blender_list_files', 'blender_file_status', 'blender_open_file', 'blender_new_file', 'blender_save_file', 'blender_save_as',
     ...catalog.tools.map(tool => tool.name), ...gitTools.map(tool => tool.name),
   ]);
-  assert.deepEqual(actual.slice(8).map(tool => tool.inputSchema), [...catalog.tools, ...gitTools].map(tool => tool.inputSchema));
+  assert.deepEqual(actual.slice(14).map(tool => tool.inputSchema), [...catalog.tools, ...gitTools].map(tool => tool.inputSchema));
   const imageImport = actual.find(tool => tool.name === 'unity_import_chat_image');
   assert.deepEqual(imageImport._meta, { 'openai/fileParams': ['file'] });
   assert.deepEqual(imageImport.inputSchema.properties.file.required, ['download_url', 'file_id']);
