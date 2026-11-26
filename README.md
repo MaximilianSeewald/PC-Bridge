@@ -10,6 +10,7 @@ Windows- oder Linux-PC und übergibt Aufrufe an Unity MCP oder Blender MCP.
 - `unity_import_chat_image` übernimmt ein PNG oder JPEG aus dem Chat als Sprite in Unity.
 - `blender_scene_info` und `blender_viewport` liefern Szenendaten und ein PNG aus dem lokalen Blender. Die Einrichtung steht in der [Client-Anleitung](client/README.md#blender-mcp-verbinden).
 - `blender_execute_code` bearbeitet Modelle, Materialien und Animationen in Blender. `blender_fbx_to_unity` exportiert benannte oder ausgewählte Objekte und importiert das Modell direkt ins aktive Unity-Projekt.
+- `blender_list_files`, `blender_file_status`, `blender_open_file`, `blender_new_file`, `blender_save_file` und `blender_save_as` verwalten Blender-Quelldateien im aktiven Unity-Projekt. Ein expliziter FBX-Aktualisierungsmodus erhält die Unity-Metadatei.
 - Der Katalog spiegelt die integrierten Werkzeuge von MCP for Unity
   v10.0.0 mitsamt ihren Parameterschemas. Der Client startet
   die Unity-Anbindung automatisch beim ersten Unity-Aufruf.
